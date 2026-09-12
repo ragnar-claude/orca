@@ -182,4 +182,17 @@ describe('Store keeps runtime-authored session fields across desktop writes', ()
       Object.keys(store.getWorkspaceSession().clientHostedBrowserPagesByWorktree ?? {})
     ).toEqual([other])
   })
+
+  it.each([undefined, HOST_ID, 'runtime:m5-fixture'])(
+    'treats a null lifecycle write as a no-op in the %s session partition',
+    (hostId) => {
+      const store = createStore()
+      seedRuntimeRows(store, hostId)
+      const before = store.getWorkspaceSession(hostId)
+
+      expect(() => store.setWorkspaceSession(null as never, hostId)).not.toThrow()
+      expect(() => store.patchWorkspaceSession(null as never, hostId)).not.toThrow()
+      expect(store.getWorkspaceSession(hostId)).toEqual(before)
+    }
+  )
 })

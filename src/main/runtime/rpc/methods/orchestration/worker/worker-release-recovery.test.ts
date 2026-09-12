@@ -111,8 +111,14 @@ describe('orchestration worker release recovery', () => {
     return method.handler(parsed, ctx)
   }
 
-  async function startWorker(): Promise<{ taskId: string; dispatchId: string }> {
-    const task = db.createTask({ spec: 'release recovery fixture task', runId: activeRunId })
+  async function startWorker(): Promise<{
+    taskId: string
+    dispatchId: string
+  }> {
+    const task = db.createTask({
+      spec: 'release recovery fixture task',
+      runId: activeRunId
+    })
     const result = (await call('orchestration.workerStart', {
       task: task.id,
       from: 'term_coord',
@@ -141,7 +147,9 @@ describe('orchestration worker release recovery', () => {
     setup()
     const { dispatchId } = await startSettledWorker()
     vi.mocked(runtime.closeTerminal).mockRejectedValueOnce(new Error('Multiplexer disposed'))
-    const interrupted = (await call('orchestration.workerRelease', { dispatch: dispatchId })) as {
+    const interrupted = (await call('orchestration.workerRelease', {
+      dispatch: dispatchId
+    })) as {
       state: string
     }
     expect(interrupted.state).toBe('release_pending')
@@ -194,7 +202,7 @@ describe('orchestration worker release recovery', () => {
     expect(runtime.closeTerminal).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps a requested release pending after positive exit when no archive was committed', async () => {
+  it('settles a positively exited missing terminal with an unavailable archive', async () => {
     setup()
     const { dispatchId } = await startSettledWorker()
     const requested = db.requestWorkerTerminalRelease(dispatchId)
@@ -209,13 +217,14 @@ describe('orchestration worker release recovery', () => {
 
     await expect(reconcileRequestedWorkerTerminalReleases(runtime)).resolves.toMatchObject({
       attempted: 1,
-      released: 0,
-      pending: 1,
+      released: 1,
+      pending: 0,
       unknown: 0
     })
     expect(db.getWorkerTerminalResourceByOwner(dispatchId)).toMatchObject({
-      release_state: 'requested',
-      ownership_state: 'owned'
+      release_state: 'released',
+      ownership_state: 'released',
+      archive_status: 'unavailable'
     })
     expect(runtime.closeTerminal).not.toHaveBeenCalled()
   })
@@ -223,14 +232,19 @@ describe('orchestration worker release recovery', () => {
   it('settles a disposed endpoint as released once the host certified the exit', async () => {
     setup()
     const { dispatchId } = await startSettledWorker()
-    vi.spyOn(runtime, 'getTerminalLivenessVerdict').mockReturnValue({ status: 'exited' })
+    vi.spyOn(runtime, 'getTerminalLivenessVerdict').mockReturnValue({
+      status: 'exited'
+    })
     vi.mocked(runtime.getOrchestrationDispatchAuthority).mockRestore()
     expect(runtime.getOrchestrationDispatchAuthority('term_worker')).toBeNull()
     vi.mocked(runtime.closeTerminal).mockRejectedValueOnce(new Error('Multiplexer disposed'))
 
     await expect(
       call('orchestration.workerRelease', { dispatch: dispatchId })
-    ).resolves.toMatchObject({ state: 'released', processAction: 'closed_exited_terminal' })
+    ).resolves.toMatchObject({
+      state: 'released',
+      processAction: 'closed_exited_terminal'
+    })
   })
 
   it('does not substitute absent launch authority for a positive host exit verdict', async () => {
@@ -244,7 +258,10 @@ describe('orchestration worker release recovery', () => {
 
     await expect(
       call('orchestration.workerRelease', { dispatch: dispatchId })
-    ).resolves.toMatchObject({ state: 'retained', reason: 'identity_unproven' })
+    ).resolves.toMatchObject({
+      state: 'retained',
+      reason: 'identity_unproven'
+    })
     expect(runtime.closeTerminal).not.toHaveBeenCalled()
   })
 
@@ -273,14 +290,20 @@ describe('orchestration worker release recovery', () => {
 
     await expect(
       call('orchestration.workerRelease', { dispatch: dispatchId })
-    ).resolves.toMatchObject({ state: 'release_unknown' })
+    ).resolves.toMatchObject({
+      state: 'release_unknown'
+    })
     expect(db.getWorkerTerminalArchive(dispatchId)).toBeDefined()
 
     vi.mocked(runtime.showTerminal).mockRejectedValue(new Error('terminal_handle_stale'))
     await expect(
       call('orchestration.workerRelease', { dispatch: dispatchId })
-    ).resolves.toMatchObject({ state: 'release_unknown' })
-    const read = (await call('orchestration.workerRead', { dispatch: dispatchId })) as {
+    ).resolves.toMatchObject({
+      state: 'release_unknown'
+    })
+    const read = (await call('orchestration.workerRead', {
+      dispatch: dispatchId
+    })) as {
       archived?: boolean
       status: { terminal: string }
       terminal: { tail: string[] }
@@ -299,7 +322,9 @@ describe('orchestration worker release recovery', () => {
 
     await expect(
       call('orchestration.workerRelease', { dispatch: dispatchId })
-    ).resolves.toMatchObject({ state: 'release_pending' })
+    ).resolves.toMatchObject({
+      state: 'release_pending'
+    })
     expect(db.getWorkerTerminalResourceByOwner(dispatchId)?.release_state).toBe('releasing')
 
     await expect(call('orchestration.workerRead', { dispatch: dispatchId })).resolves.toMatchObject(
@@ -327,12 +352,18 @@ describe('orchestration worker release recovery', () => {
     const pendingClose = deferred<Awaited<ReturnType<OrcaRuntimeService['closeTerminal']>>>()
     vi.mocked(runtime.closeTerminal).mockReturnValue(pendingClose.promise)
 
-    const interactive = call('orchestration.workerRelease', { dispatch: dispatchId })
+    const interactive = call('orchestration.workerRelease', {
+      dispatch: dispatchId
+    })
     await vi.waitFor(() => expect(runtime.closeTerminal).toHaveBeenCalledTimes(1))
     const first = reconcileRequestedWorkerTerminalReleases(runtime)
     const second = reconcileRequestedWorkerTerminalReleases(runtime)
     expect(second).toBe(first)
-    pendingClose.resolve({ handle: 'term_worker', tabId: 'tab-worker', ptyKilled: true })
+    pendingClose.resolve({
+      handle: 'term_worker',
+      tabId: 'tab-worker',
+      ptyKilled: true
+    })
 
     await expect(interactive).resolves.toMatchObject({ state: 'released' })
     await expect(Promise.all([first, second])).resolves.toEqual([
@@ -363,7 +394,9 @@ describe('orchestration worker release recovery', () => {
     expect(runtime.closeTerminal).toHaveBeenCalledTimes(50)
 
     const control = await startWorker()
-    const listed = (await call('orchestration.workerList', { run: activeRunId })) as {
+    const listed = (await call('orchestration.workerList', {
+      run: activeRunId
+    })) as {
       workers: { dispatchId: string; terminalState: string | null }[]
       counts: Record<string, number>
     }
@@ -377,9 +410,16 @@ describe('orchestration worker release recovery', () => {
   it('backfills legacy terminal resources as retained external evidence', () => {
     setup()
     const insertLegacy = (dispatchId: string, handle: string, paneKey: string | null): void => {
-      const task = db.createTask({ spec: `legacy ${dispatchId}`, runId: activeRunId })
+      const task = db.createTask({
+        spec: `legacy ${dispatchId}`,
+        runId: activeRunId
+      })
       const raw = (
-        db as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }
+        db as unknown as {
+          db: {
+            prepare: (sql: string) => { run: (...args: unknown[]) => void }
+          }
+        }
       ).db
       raw
         .prepare(
@@ -420,7 +460,11 @@ describe('orchestration worker release recovery', () => {
     const insertLegacy = (dispatchId: string, action: 'created' | 'reused'): void => {
       const task = db.createTask({ spec: dispatchId, runId: activeRunId })
       const raw = (
-        db as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }
+        db as unknown as {
+          db: {
+            prepare: (sql: string) => { run: (...args: unknown[]) => void }
+          }
+        }
       ).db
       raw
         .prepare(

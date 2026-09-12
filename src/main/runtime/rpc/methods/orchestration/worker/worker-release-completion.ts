@@ -19,6 +19,7 @@ import { workerTerminalLeaseIsCurrent } from './worker-terminal-release-lease'
 import { resolveStructuredWorkerForDispatch } from '../../orchestration-structured-worker-lifecycle'
 import { stopStructuredWorkerForRelease } from './structured-worker-release-stop'
 import { isStructuredWorkerHandle } from '../../../../structured-worker-identity'
+import { settlePositivelyExitedMissingWorkerTerminal } from './worker-missing-terminal-release'
 
 export {
   archiveSummary,
@@ -132,32 +133,24 @@ async function completeWorkerTerminalReleaseOnce(
     }
   }
   if (observation.status === 'missing' || observation.status === 'unattached') {
-    if (args.mode === 'recovery') {
-      // A close can succeed before the process crashes, leaving `releasing` durable state while
-      // terminal inventory no longer resolves the handle. Only a positive host liveness verdict
-      // may settle that exact incarnation; contact loss remains pending/unverifiable.
-      if (resource.process_incarnation) {
-        const processLiveness = await runtime.inspectTerminalProcessIncarnationLiveness(
-          resource.process_incarnation,
-          resource.host_scope
-        )
-        if (processLiveness === 'exited') {
-          const reconciled = db.settleDeadWorkerTerminalRelease({
-            requestingDispatchId: dispatchId,
-            resourceId: resource.id,
-            processIncarnation: resource.process_incarnation
-          })
-          if (reconciled.disposition === 'released') {
-            runtime.notifyMessageArrived(`dispatch:${dispatchId}`, 'status')
-            return {
-              dispatchId,
-              state: 'released',
-              processAction: 'closed_exited_terminal',
-              archive: archiveSummary(reconciled.resource)
-            }
-          }
-        }
+    // A close can succeed before its response arrives, or an exited worker can lose its tab before
+    // release starts. Positive incarnation liveness makes that missing terminal the desired
+    // idempotent result; contact loss remains pending/unknown and never authorizes cleanup.
+    const released = await settlePositivelyExitedMissingWorkerTerminal({
+      runtime,
+      db,
+      dispatchId,
+      resource
+    })
+    if (released) {
+      return {
+        dispatchId,
+        state: 'released',
+        processAction: 'closed_exited_terminal',
+        archive: archiveSummary(released)
       }
+    }
+    if (args.mode === 'recovery') {
       // Inventory may still be incomplete during startup/reconnect discovery; defer.
       return {
         dispatchId,
@@ -207,7 +200,10 @@ async function completeWorkerTerminalReleaseOnce(
       attachedAtMs: orchestrationTimestampToMs(worker.created_at),
       structuredWorker: structured
     })
-    capturedArchive = { kind: captured.kind, content: JSON.stringify(captured.content) }
+    capturedArchive = {
+      kind: captured.kind,
+      content: JSON.stringify(captured.content)
+    }
     archiveSource = captured.kind === 'terminal_tail' ? 'terminal' : 'transcript'
     archiveStatus = captured.status
   } else {

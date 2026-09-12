@@ -27,22 +27,9 @@ export function registerFederatedReleaseRecoveryScenarios(harness: RecoveryScena
     harness.setWorkerTerminalAvailable(false)
     harness.restartWorkerRuntime(true)
     const restartedRuntime = harness.runtime()
-    await expect(reconcileRequestedWorkerTerminalReleases(restartedRuntime)).resolves.toMatchObject(
-      {
-        attempted: 1,
-        released: 0,
-        pending: 1,
-        unknown: 0,
-        retained: 0
-      }
+    vi.spyOn(restartedRuntime, 'inspectTerminalProcessIncarnationLiveness').mockResolvedValue(
+      'exited'
     )
-    expect(restartedRuntime.closeTerminal).not.toHaveBeenCalled()
-    expect(harness.workerDb().getWorkerTerminalResourceByOwner(dispatchId)).toMatchObject({
-      release_state: 'requested',
-      ownership_state: 'owned'
-    })
-
-    harness.setWorkerTerminalAvailable(true)
     await expect(reconcileRequestedWorkerTerminalReleases(restartedRuntime)).resolves.toMatchObject(
       {
         attempted: 1,
@@ -52,13 +39,14 @@ export function registerFederatedReleaseRecoveryScenarios(harness: RecoveryScena
         retained: 0
       }
     )
-    expect(restartedRuntime.closeTerminal).toHaveBeenCalledTimes(1)
-    expect(harness.workerDb().getRemoteDispatchAttachment(dispatchId)).toMatchObject({
-      stage: 'released'
-    })
+    expect(restartedRuntime.closeTerminal).not.toHaveBeenCalled()
     expect(harness.workerDb().getWorkerTerminalResourceByOwner(dispatchId)).toMatchObject({
       release_state: 'released',
-      ownership_state: 'released'
+      ownership_state: 'released',
+      archive_status: 'unavailable'
+    })
+    expect(harness.workerDb().getRemoteDispatchAttachment(dispatchId)).toMatchObject({
+      stage: 'released'
     })
 
     await expect(reconcileRequestedWorkerTerminalReleases(restartedRuntime)).resolves.toMatchObject(
@@ -67,7 +55,7 @@ export function registerFederatedReleaseRecoveryScenarios(harness: RecoveryScena
         released: 0
       }
     )
-    expect(restartedRuntime.closeTerminal).toHaveBeenCalledTimes(1)
+    expect(restartedRuntime.closeTerminal).not.toHaveBeenCalled()
   })
 
   it('keeps a transient remote close failure pending for automatic reconciliation', async () => {
@@ -101,7 +89,11 @@ export function registerFederatedReleaseRecoveryScenarios(harness: RecoveryScena
 
     await expect(
       reconcileRequestedWorkerTerminalReleases(harness.runtime())
-    ).resolves.toMatchObject({ attempted: 1, released: 1, unknown: 0 })
+    ).resolves.toMatchObject({
+      attempted: 1,
+      released: 1,
+      unknown: 0
+    })
     expect(harness.workerDb().getWorkerTerminalResourceByOwner(dispatchId)).toMatchObject({
       release_state: 'released',
       ownership_state: 'released'
@@ -141,6 +133,9 @@ export function registerFederatedReleaseRecoveryScenarios(harness: RecoveryScena
     })
 
     harness.restartWorkerRuntime(true)
+    vi.spyOn(harness.runtime(), 'inspectTerminalProcessIncarnationLiveness').mockResolvedValue(
+      'exited'
+    )
     const archived = await harness.dispatch({
       id: 'rpc_remote_read_interrupted_archive',
       authToken: 'coordinator-token',
@@ -167,11 +162,10 @@ export function registerFederatedReleaseRecoveryScenarios(harness: RecoveryScena
     expect(retried).toMatchObject({
       ok: true,
       result: {
-        state: 'retained',
-        reason: 'identity_unproven',
-        processAction: 'none',
+        state: 'released',
+        processAction: 'closed_exited_terminal',
         archive: { source: 'terminal', status: 'captured' },
-        remoteOutput: { archived: true, status: { liveness: 'unverifiable' } }
+        remoteOutput: { archived: true, status: { liveness: 'exited' } }
       }
     })
   })

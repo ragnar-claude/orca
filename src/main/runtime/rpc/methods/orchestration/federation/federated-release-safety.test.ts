@@ -122,6 +122,43 @@ describe('federated worker release ownership', () => {
     expect(runtime.closeTerminal).toHaveBeenCalledWith(TERMINAL_HANDLE)
   })
 
+  it('releases a positively exited missing runtime terminal without closing a live pane', async () => {
+    createAttachment('ctx_missing_exited', 'created')
+    settleAttachment('ctx_missing_exited')
+    vi.mocked(runtime.showTerminal).mockRejectedValue(new Error('terminal_handle_stale'))
+    vi.spyOn(runtime, 'inspectTerminalProcessIncarnationLiveness').mockResolvedValue('exited')
+
+    await expect(
+      call('orchestration.federationRelease', 'ctx_missing_exited')
+    ).resolves.toMatchObject({
+      state: 'released',
+      processAction: 'closed_exited_terminal',
+      archive: { status: 'unavailable' }
+    })
+    expect(runtime.closeTerminal).not.toHaveBeenCalled()
+    expect(db.getRemoteDispatchAttachment('ctx_missing_exited')).toMatchObject({
+      stage: 'released'
+    })
+  })
+
+  it('does not release a missing runtime terminal while process exit is unproven', async () => {
+    createAttachment('ctx_missing_live', 'created')
+    settleAttachment('ctx_missing_live')
+    vi.mocked(runtime.showTerminal).mockRejectedValue(new Error('terminal_handle_stale'))
+    vi.spyOn(runtime, 'inspectTerminalProcessIncarnationLiveness').mockResolvedValue('live')
+
+    await expect(
+      call('orchestration.federationRelease', 'ctx_missing_live')
+    ).resolves.toMatchObject({
+      state: 'retained',
+      reason: 'identity_unproven'
+    })
+    expect(runtime.closeTerminal).not.toHaveBeenCalled()
+    expect(db.getWorkerTerminalResourceByOwner('ctx_missing_live')).not.toMatchObject({
+      ownership_state: 'released'
+    })
+  })
+
   it.each([
     ['terminal_handle_stale', 'released'],
     ['endpoint is not connected', 'release_pending']

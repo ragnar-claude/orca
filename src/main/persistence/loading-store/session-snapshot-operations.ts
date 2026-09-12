@@ -42,6 +42,10 @@ export class SessionSnapshotOperations {
   }
 
   setWorkspaceSession(session: PersistedState['workspaceSession'], hostId?: string | null): void {
+    if (session == null) {
+      // Renderer teardown can omit its snapshot; preserve the durable session instead of crashing close cleanup.
+      return
+    }
     const resolved = resolveHostId(hostId)
     if (resolved === LOCAL_EXECUTION_HOST_ID) {
       setLocalWorkspaceSession(this, session)
@@ -63,6 +67,9 @@ export class SessionSnapshotOperations {
   }
 
   patchWorkspaceSession(patch: WorkspaceSessionPatch, hostId?: string | null): void {
+    if (patch == null) {
+      return
+    }
     const resolved = resolveHostId(hostId)
     // Why: the debounced hot path sends only changed slices; scalar/UI patches skip terminal normalization, topology patches keep stale-PTY protections.
     let next: WorkspaceSessionState = {

@@ -1,56 +1,30 @@
 import { describeUnconfirmedAgentStop } from '../../../../../../shared/pty-liveness-verdict'
 import type { RemoteDispatchAttachmentRow } from '../../../../orchestration/types'
-import type {
-  WorkerTerminalResourceRow,
-  WorkerTerminalRetainedReason
-} from '../../../../orchestration/worker-terminal-ownership'
+import type { WorkerTerminalResourceRow } from '../../../../orchestration/worker-terminal-ownership'
 import {
   captureWorkerOutputArchive,
   summarizeWorkerOutputArchive
 } from '../../../../orchestration/worker-output-archive'
 import type { OrcaRuntimeService } from '../../../../orca-runtime'
-import { readArchivedWorkerOutput } from '../worker/worker-archive-read'
 import {
   archiveSummary,
   releaseUnknownRecovery,
   type WorkerReleaseReceipt
 } from '../worker/worker-release-completion'
+import {
+  settlePositivelyExitedMissingRemoteAttachment,
+  workerTerminalRetainedReason
+} from '../worker/worker-missing-terminal-release'
 import { orchestrationTimestampToMs } from '../worker/worker-output'
 import type { inspectRemoteAttachment } from './federation-attachment-observation'
+import {
+  projectArchivedOutputLiveness,
+  readRemoteAttachmentArchive
+} from './federation-attachment-archive'
 import {
   classifyWorkerTerminalCloseError,
   TRANSIENT_WORKER_RELEASE_RECOVERY
 } from '../worker/worker-release-close-error'
-
-export async function readRemoteAttachmentArchive(args: {
-  runtime: OrcaRuntimeService
-  attachment: RemoteDispatchAttachmentRow
-  source?: 'auto' | 'transcript' | 'terminal'
-  cursor?: string | number
-  limit?: number
-  liveness?: 'live' | 'unverifiable' | 'exited'
-}) {
-  const archive = args.runtime
-    .getOrchestrationDb()
-    .getWorkerTerminalArchive(args.attachment.dispatch_id)
-  if (!archive || !args.attachment.terminal_handle) {
-    return null
-  }
-  return readArchivedWorkerOutput({
-    db: args.runtime.getOrchestrationDb(),
-    dispatchId: args.attachment.dispatch_id,
-    workerState: args.attachment.state,
-    resource: {
-      id: `remote-attachment:${args.attachment.dispatch_id}`,
-      terminal_handle: args.attachment.terminal_handle,
-      release_state: args.attachment.stage === 'released' ? 'released' : 'releasing'
-    },
-    source: args.source,
-    cursor: args.cursor,
-    limit: args.limit,
-    liveness: args.liveness
-  })
-}
 
 export async function releaseRemoteAttachment(args: {
   runtime: OrcaRuntimeService
@@ -96,6 +70,22 @@ export async function releaseRemoteAttachment(args: {
     }
   }
   if (requested.disposition === 'retained') {
+    if (requested.resource && requested.reason === 'identity_unproven') {
+      const released = await settlePositivelyExitedMissingRemoteAttachment({
+        runtime,
+        db,
+        dispatchId: attachment.dispatch_id,
+        resource: requested.resource
+      })
+      if (released) {
+        return {
+          dispatchId: attachment.dispatch_id,
+          state: 'released',
+          processAction: 'closed_exited_terminal',
+          archive: archiveSummary(released)
+        }
+      }
+    }
     return {
       dispatchId: attachment.dispatch_id,
       state: 'retained',
@@ -106,6 +96,30 @@ export async function releaseRemoteAttachment(args: {
   }
   const resource = requested.resource
   if (!observation.exact || !observation.terminal) {
+    if (observation.status === 'missing' || observation.status === 'unattached') {
+      const released = await settlePositivelyExitedMissingRemoteAttachment({
+        runtime,
+        db,
+        dispatchId: attachment.dispatch_id,
+        resource
+      })
+      if (released) {
+        const output = storedArchive
+          ? await readRemoteAttachmentArchive({
+              runtime,
+              attachment,
+              liveness: 'exited'
+            })
+          : null
+        return {
+          dispatchId: attachment.dispatch_id,
+          state: 'released',
+          processAction: 'closed_exited_terminal',
+          archive: archiveSummary(released),
+          ...(output ? { output } : {})
+        }
+      }
+    }
     if (
       args.mode === 'recovery' &&
       (observation.status === 'missing' || observation.status === 'unattached')
@@ -165,7 +179,11 @@ export async function releaseRemoteAttachment(args: {
     if (!archive || archive.resource_id !== resource.id) {
       throw new Error('The execution host did not commit the worker output archive.')
     }
-    output = await readRemoteAttachmentArchive({ runtime, attachment, liveness })
+    output = await readRemoteAttachmentArchive({
+      runtime,
+      attachment,
+      liveness
+    })
     if (!output) {
       throw new Error('The execution host could not reopen the committed worker output archive.')
     }
@@ -190,7 +208,7 @@ export async function releaseRemoteAttachment(args: {
     return {
       dispatchId: attachment.dispatch_id,
       state: 'retained',
-      reason: retainedReason(releasing),
+      reason: workerTerminalRetainedReason(releasing),
       processAction: 'none',
       archive: archiveSummary(releasing),
       output
@@ -286,27 +304,4 @@ function remoteAttachmentLeaseIsCurrent(
     }) &&
     !db.workerTerminalResourceHasIdentityConflict(resource.id)
   )
-}
-
-function retainedReason(resource: WorkerTerminalResourceRow): WorkerTerminalRetainedReason {
-  if (resource.retained_reason) {
-    return resource.retained_reason as WorkerTerminalRetainedReason
-  }
-  if (resource.ownership_state === 'user_owned') {
-    return 'user_takeover'
-  }
-  return 'identity_unproven'
-}
-
-function projectArchivedOutputLiveness<
-  T extends { status: { terminal: string; liveness: string } }
->(output: T, liveness: 'live' | 'unverifiable' | 'exited'): T {
-  return {
-    ...output,
-    status: {
-      ...output.status,
-      terminal: liveness === 'live' ? 'running' : liveness === 'exited' ? 'exited' : 'unknown',
-      liveness
-    }
-  }
 }

@@ -5,10 +5,8 @@ import { mapWithConcurrency } from '../../../../../../shared/map-with-concurrenc
 import { readExactWorkerOutput } from '../worker/worker-output'
 import { describeUnconfirmedAgentStop } from '../../../../../../shared/pty-liveness-verdict'
 import { inspectRemoteAttachment, requireHomeAttachment } from './federation-attachment-observation'
-import {
-  readRemoteAttachmentArchive,
-  releaseRemoteAttachment
-} from './federated-worker-release-host'
+import { releaseRemoteAttachment } from './federated-worker-release-host'
+import { readRemoteAttachmentArchive } from './federation-attachment-archive'
 import {
   FederationDispatchParams,
   FederationFleetSnapshotParams,

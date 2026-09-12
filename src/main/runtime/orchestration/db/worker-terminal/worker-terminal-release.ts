@@ -38,7 +38,11 @@ export function requestWorkerTerminalRelease(
         )
       }
       this.db.exec('COMMIT')
-      return { disposition: 'retained', resource: null, reason: 'no_owned_resource' }
+      return {
+        disposition: 'retained',
+        resource: null,
+        reason: 'no_owned_resource'
+      }
     }
     if (!WORKER_SETTLED_STATES.includes(worker.state)) {
       // Why: release is post-completion cleanup only; recording intent for an unsettled or
@@ -53,8 +57,16 @@ export function requestWorkerTerminalRelease(
       const transferred = this.getWorkerTerminalResourceFormerlyOwnedBy(dispatchId)
       this.db.exec('COMMIT')
       return transferred
-        ? { disposition: 'retained', resource: transferred, reason: 'ownership_transferred' }
-        : { disposition: 'retained', resource: null, reason: 'no_owned_resource' }
+        ? {
+            disposition: 'retained',
+            resource: transferred,
+            reason: 'ownership_transferred'
+          }
+        : {
+            disposition: 'retained',
+            resource: null,
+            reason: 'no_owned_resource'
+          }
     }
     const decision = decideWorkerTerminalRelease(resource)
     if (decision.action === 'already_released') {
@@ -102,6 +114,9 @@ export function settleDeadWorkerTerminalRelease(
     requestingDispatchId: string
     resourceId: string
     processIncarnation: string
+    /** The owning host positively proved this exact process exited after its terminal vanished,
+     * so there is no remaining source from which an archive could be captured. */
+    allowUnavailableArchive?: boolean
   }
 ):
   | { disposition: 'released'; resource: WorkerTerminalResourceRow }
@@ -119,8 +134,12 @@ export function settleDeadWorkerTerminalRelease(
     const requesterRelated =
       resource.owner_dispatch_id === params.requestingDispatchId ||
       priorOwners?.includes(params.requestingDispatchId) === true
-    const requester = this.getWorkerDispatch(params.requestingDispatchId)
-    const owner = this.getWorkerDispatch(resource.owner_dispatch_id)
+    const requester =
+      this.getWorkerDispatch(params.requestingDispatchId) ??
+      this.getRemoteDispatchAttachment(params.requestingDispatchId)
+    const owner =
+      this.getWorkerDispatch(resource.owner_dispatch_id) ??
+      this.getRemoteDispatchAttachment(resource.owner_dispatch_id)
     const requesterSettled = Boolean(requester && WORKER_SETTLED_STATES.includes(requester.state))
     const ownerSettled = Boolean(owner && WORKER_SETTLED_STATES.includes(owner.state))
     // A positive process-exit verdict only proves the exact process is gone; release is terminal
@@ -131,7 +150,9 @@ export function settleDeadWorkerTerminalRelease(
     const archive = this.getWorkerTerminalArchive(resource.owner_dispatch_id)
     const archiveUnreachable =
       resource.owner_dispatch_id === params.requestingDispatchId &&
-      (resource.release_state === 'not_requested' || resource.release_state === 'retained')
+      (params.allowUnavailableArchive === true ||
+        resource.release_state === 'not_requested' ||
+        resource.release_state === 'retained')
     if (
       !priorOwners ||
       !requesterRelated ||
