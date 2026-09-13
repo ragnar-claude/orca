@@ -1,5 +1,6 @@
 import type { PersistedUIState } from '../../../shared/persisted-ui-state-types'
 import { formatShutdownCheckpointFailureReason } from '../../../shared/renderer-shutdown-events'
+import { isWindowCloseCheckpointInProgress } from '../components/window-close-request-coordinator'
 import type { WorkspaceSessionHostSnapshot } from '../lib/workspace-session-host-persistence'
 import { recordRendererCrashBreadcrumb } from '../lib/crash-breadcrumb-recorder'
 
@@ -34,7 +35,9 @@ export type ShutdownCheckpointPersist = {
  *
  *  A factory rather than a bare function so full-session staging failures can stay
  *  visible-and-retryable on the first attempt and only degrade on a repeat: a
- *  transient failure gets its retry, a deterministic one can't strand the user. */
+ *  transient failure gets its retry, a deterministic one can't strand the user.
+ *  Window-close / desktop quit is the exception — that path issues one synthetic
+ *  beforeunload, so a degradable failure must fall back in the same attempt. */
 export function createShutdownCheckpointPersist(
   deps: ShutdownCheckpointPersistDeps
 ): ShutdownCheckpointPersist {
@@ -86,7 +89,12 @@ export function createShutdownCheckpointPersist(
       // scrollback that a retry may well save. Only a repeat failure trades the
       // full snapshot for an unblocked shutdown. Non-degradable failures never
       // arm the flag, so an unrelated unload can't burn a later restart's retry.
-      const keepBlocking = !fullStagingFailedOnPriorAttempt || !canDegradeToDurableSession()
+      // Window-close is single-attempt: there is no second synthetic beforeunload
+      // after a veto, so a degradable failure must fall back here (#15352).
+      const keepBlocking =
+        !canDegradeToDurableSession() ||
+        (!fullStagingFailedOnPriorAttempt && !isWindowCloseCheckpointInProgress())
+      const repeatingFailure = fullStagingFailedOnPriorAttempt
       if (canDegradeToDurableSession()) {
         fullStagingFailedOnPriorAttempt = true
       }
@@ -94,7 +102,9 @@ export function createShutdownCheckpointPersist(
         throw error
       }
       console.error(
-        '[app] Staging the full renderer session failed again; using durable session',
+        repeatingFailure
+          ? '[app] Staging the full renderer session failed again; using durable session'
+          : '[app] Staging the full renderer session failed; using durable session',
         error
       )
       deps.stageBeforeUnloadSync({ sessions: [], ui: deps.buildUiPatch() })

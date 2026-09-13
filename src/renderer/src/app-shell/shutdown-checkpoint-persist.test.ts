@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { runWithWindowCloseCheckpointScope } from '../components/window-close-request-coordinator'
 import {
   createShutdownCheckpointPersist,
   type ShutdownCheckpointPersistDeps
@@ -63,6 +64,27 @@ describe('createShutdownCheckpointPersist', () => {
     expect(stageBeforeUnloadSync).toHaveBeenCalledTimes(1)
   })
 
+  it('degrades immediately on a window-close full-staging failure without a second beforeunload', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const stageBeforeUnloadSync = vi.fn((args: { sessions: unknown[] }) => {
+      if (args.sessions.length > 0) {
+        throw new Error('sync IPC staging failed')
+      }
+    })
+    const { run: persist } = createShutdownCheckpointPersist(makeDeps({ stageBeforeUnloadSync }))
+
+    // Desktop quit / window close issues one synthetic beforeunload. A degradable
+    // full-staging failure must fall back in that same attempt, or the veto toast
+    // fires and no retry ever runs.
+    expect(() => runWithWindowCloseCheckpointScope(persist)).not.toThrow()
+    expect(stageBeforeUnloadSync).toHaveBeenCalledTimes(2)
+    expect(stageBeforeUnloadSync).toHaveBeenLastCalledWith({
+      sessions: [],
+      ui: { activeView: 'workspace' }
+    })
+    vi.restoreAllMocks()
+  })
+
   it('degrades to durable-only staging when full staging fails again on retry (STA-5505)', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const stageBeforeUnloadSync = vi.fn((args: { sessions: unknown[] }) => {
@@ -111,6 +133,18 @@ describe('createShutdownCheckpointPersist', () => {
 
     expect(persist).toThrow('sync IPC staging failed')
     expect(persist).toThrow('sync IPC staging failed')
+  })
+
+  it('still fails a window-close checkpoint when dirty editor buffers exist', () => {
+    const stageBeforeUnloadSync = vi.fn(() => {
+      throw new Error('sync IPC staging failed')
+    })
+    const { run: persist } = createShutdownCheckpointPersist(
+      makeDeps({ hasDirtyOpenFiles: () => true, stageBeforeUnloadSync })
+    )
+
+    expect(() => runWithWindowCloseCheckpointScope(persist)).toThrow('sync IPC staging failed')
+    expect(stageBeforeUnloadSync).toHaveBeenCalledTimes(1)
   })
 
   it('still fails the checkpoint when staging throws outside a degradable shutdown', () => {
