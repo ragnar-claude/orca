@@ -32,6 +32,7 @@ import {
   isKnownRemoteStartFailure
 } from './federated-worker-start-receipts'
 import { parseTaskDeps } from '../worker/task-deps-argument'
+import { assertLocalWorkerStartLmStudioAdmission } from '../worker/local-lm-studio-admission'
 
 export async function startFederatedWorker(args: {
   params: WorkerStartInput
@@ -45,6 +46,8 @@ export async function startFederatedWorker(args: {
     method: string
     payloadHash: string
   }
+  /** Test seam: fail-closed shared LM Studio admission before the home Dispatch exists. */
+  admitLocalLmStudio?: typeof assertLocalWorkerStartLmStudioAdmission
 }): Promise<unknown> {
   const { params, runtime, db, task, runId, orchestrationMutation } = args
   if (!isWorkerStartTimeoutWithinTimerLimit(params.timeoutMs)) {
@@ -69,6 +72,12 @@ export async function startFederatedWorker(args: {
   const createsWorktree = worktree === 'new-top-level'
   assertWorkerLaunchPreferencesCreateTerminal(params)
   validateFederatedWorkerStartPlacement(params, createsWorktree)
+  const admit = args.admitLocalLmStudio ?? assertLocalWorkerStartLmStudioAdmission
+  await admit({
+    agent: params.agent,
+    params,
+    existingSpec: task?.spec
+  })
   const requestedLaunch = createPendingWorkerLaunchReceipt({
     agent: isTuiAgent(params.agent) ? params.agent : null,
     model: params.model,

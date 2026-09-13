@@ -10,6 +10,11 @@ import {
 } from './worker-launch-preferences'
 import type { WorkerStartInput } from './worker-start-schema'
 
+export {
+  assertLocalWorkerStartLmStudioAdmission,
+  shouldAdmitLocalLmStudio
+} from './local-lm-studio-admission'
+
 type WorkerStartLaunch = ReturnType<typeof resolveWorkerLaunchPreferences>
 
 export function validateFederatedWorkerStartPlacement(
