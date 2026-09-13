@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import {
   EXACT_ORCA_PATH,
+  CHECKPOINT_TASK_STATUSES,
+  CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT,
+  LOCAL_MODEL_INPUT_BUDGET_TOKENS,
   MODULE_ROOT,
   SERVING_PROMOTION_CONTRACT,
   SERVING_PROMOTION_HOOK,
   TOKEN_ROTATION_THRESHOLD,
   WORKTREE,
   assertSoleSourceOwner,
+  admitPrelaunchContext,
   closeThenArchive,
   fenceGeneration,
+  enumerateCheckpointTasks,
+  evaluateRotationTelemetry,
+  parseContextTelemetry,
   planCheckpointNotification,
   planMailboxPreflight,
   replacementLaunchCommand,
@@ -20,7 +27,11 @@ import {
 const peek = (
   ids: string[],
   generation = 7
-): { messageIds: string[]; acknowledged: false; consumerGeneration: number } => ({
+): {
+  messageIds: string[]
+  acknowledged: false
+  consumerGeneration: number
+} => ({
   messageIds: ids,
   acknowledged: false,
   consumerGeneration: generation
@@ -125,13 +136,23 @@ describe('handoff, archive, overlap, workers', () => {
   })
 
   it('closes then archives and refuses archive-first', () => {
-    expect(closeThenArchive({ oldHandle: 'term_old', closed: true, stillListed: false })).toEqual({
+    expect(
+      closeThenArchive({
+        oldHandle: 'term_old',
+        closed: true,
+        stillListed: false
+      })
+    ).toEqual({
       closed: true,
       archived: true,
       closePrecededArchive: true
     })
     expect(() =>
-      closeThenArchive({ oldHandle: 'term_old', closed: false, stillListed: true })
+      closeThenArchive({
+        oldHandle: 'term_old',
+        closed: false,
+        stillListed: true
+      })
     ).toThrow(/close must precede archive/)
   })
 
@@ -155,5 +176,142 @@ describe('handoff, archive, overlap, workers', () => {
   it('preserves active workers', () => {
     expect(workersPreserved(['ctx_live'], ['ctx_live']).ok).toBe(true)
     expect(() => workersPreserved(['ctx_live'], ['ctx_other'])).toThrow(/workers/)
+  })
+})
+
+describe('provider-neutral rotation telemetry', () => {
+  it('preserves Qwen numeric and Claude percentage evidence', () => {
+    expect(parseContextTelemetry('footer 12.5K / 65.536K')).toMatchObject({
+      telemetryStatus: 'available',
+      telemetrySource: 'qwen_numeric_footer',
+      currentInputTokens: 12_500,
+      contextWindowTokens: 65_536
+    })
+    expect(parseContextTelemetry('Context left until auto-compact: 19%')).toMatchObject({
+      telemetryStatus: 'available',
+      telemetrySource: 'claude_context_remaining_footer',
+      contextRemainingPercent: 19
+    })
+    expect(CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT).toBe(20)
+  })
+
+  it('fails closed without manufacturing a false zero', () => {
+    const telemetry = parseContextTelemetry('Codex footer without a numeric context signal')
+    expect(telemetry).toMatchObject({
+      telemetryStatus: 'unavailable',
+      currentInputTokens: null,
+      telemetryEvidence: null
+    })
+    expect(
+      evaluateRotationTelemetry({
+        newInputTokens: telemetry.currentInputTokens,
+        contextRemainingPercent: telemetry.contextRemainingPercent,
+        telemetryStatus: telemetry.telemetryStatus,
+        telemetrySource: telemetry.telemetrySource
+      })
+    ).toMatchObject({
+      shouldRotate: true,
+      triggeredReasons: ['telemetry_unavailable'],
+      observations: { telemetryUnavailable: true, tokenThreshold: false }
+    })
+  })
+
+  it('upgrades a legacy zero without source to unavailable', () => {
+    expect(evaluateRotationTelemetry({ newInputTokens: 0 })).toMatchObject({
+      shouldRotate: true,
+      triggeredReasons: ['telemetry_unavailable']
+    })
+  })
+})
+
+describe('prelaunch context admission', () => {
+  const loaded = [
+    {
+      id: 'qwen/qwen3-coder-30b',
+      state: 'loaded',
+      loadedContextLength: 65_536
+    }
+  ]
+
+  it('preserves tool/output headroom before admitting a loaded model', () => {
+    expect(LOCAL_MODEL_INPUT_BUDGET_TOKENS).toBe(49_152)
+    expect(
+      admitPrelaunchContext({
+        inventoryStatus: 'available',
+        records: loaded,
+        spec: 'bounded'
+      })
+    ).toMatchObject({
+      ok: true,
+      selectedModel: 'qwen/qwen3-coder-30b',
+      effectsApplied: false,
+      splitRequired: false
+    })
+  })
+
+  it('fails before effects on unavailable inventory and unsafe context', () => {
+    expect(
+      admitPrelaunchContext({
+        inventoryStatus: 'endpoint_unreachable',
+        records: null
+      })
+    ).toMatchObject({
+      ok: false,
+      status: 'endpoint_unreachable',
+      effectsApplied: false
+    })
+    expect(
+      admitPrelaunchContext({
+        model: 'qwen/qwen3-coder-30b',
+        inventoryStatus: 'available',
+        records: loaded,
+        spec: 'x'.repeat(LOCAL_MODEL_INPUT_BUDGET_TOKENS * 4 + 1)
+      })
+    ).toMatchObject({
+      ok: false,
+      status: 'context_unsafe',
+      effectsApplied: false,
+      splitRequired: true,
+      requiredChunks: 2
+    })
+  })
+})
+
+describe('bounded checkpoint task enumeration', () => {
+  it('falls back to complete status shards and deduplicates more than 500 rows', () => {
+    const pending = Array.from({ length: 250 }, (_, index) => ({
+      id: `pending_${index}`
+    }))
+    const ready = Array.from({ length: 200 }, (_, index) => ({
+      id: `ready_${index}`
+    }))
+    const blocked = Array.from({ length: 151 }, (_, index) => ({
+      id: `blocked_${index}`
+    }))
+    ready.push(pending[0])
+    const rows = enumerateCheckpointTasks({
+      aggregate: { tasks: [], truncated: true },
+      shards: {
+        pending: { tasks: pending },
+        ready: { tasks: ready },
+        blocked: { tasks: blocked }
+      }
+    })
+    expect(CHECKPOINT_TASK_STATUSES).toEqual(['pending', 'ready', 'blocked'])
+    expect(rows).toHaveLength(601)
+    expect(new Set(rows.map((row) => row.id)).size).toBe(601)
+  })
+
+  it('goes red on a missing or truncated shard', () => {
+    expect(() =>
+      enumerateCheckpointTasks({
+        aggregate: null,
+        shards: {
+          pending: { tasks: [] },
+          ready: { tasks: [] },
+          blocked: { tasks: [], truncated: true }
+        }
+      })
+    ).toThrow(/incomplete task-list shard/)
   })
 })
