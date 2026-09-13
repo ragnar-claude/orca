@@ -56,6 +56,8 @@ type PromptContractHarness = {
   writes: string[]
 }
 
+const DRAFT_COMPOSER_CHROME = '┌Draft\nyolo · auto · draft'
+
 async function createPromptContractHarness(
   outcome: 'accepted' | 'swallowed',
   agent: TuiAgent = 'codex'
@@ -64,13 +66,18 @@ async function createPromptContractHarness(
   let submittedTurns = 0
   let startedTurns = 0
   let prematureSubmits = 0
+  const draftComposer = agent === 'opencode' || agent === 'deepseek'
   const fixture = await createAgentPromptSubmissionRuntime((runtime, data) => {
     if (data.includes(AGENT_PROMPT_BRACKETED_PASTE_END)) {
       setTimeout(() => runtime.onPtyData('pty-prompt', 'partial composer frame', Date.now()), 650)
       setTimeout(() => runtime.onPtyData('pty-prompt', '\x1b[?25h', Date.now()), 750)
       setTimeout(() => {
         composerReady = true
-        runtime.onPtyData('pty-prompt', 'final composer frame', Date.now())
+        runtime.onPtyData(
+          'pty-prompt',
+          draftComposer ? DRAFT_COMPOSER_CHROME : 'final composer frame',
+          Date.now()
+        )
       }, 1_000)
       return
     }
@@ -81,9 +88,17 @@ async function createPromptContractHarness(
     if (!composerReady) {
       prematureSubmits += 1
     }
-    if (outcome === 'accepted') {
+    if (outcome === 'accepted' || (draftComposer && submittedTurns >= 2)) {
       startedTurns += 1
-      runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
+      runtime.onPtyData(
+        'pty-prompt',
+        draftComposer ? 'Write a task or use /.\n' : '\x1b]0;Codex working\x07',
+        Date.now()
+      )
+      return
+    }
+    if (draftComposer) {
+      runtime.onPtyData('pty-prompt', DRAFT_COMPOSER_CHROME, Date.now())
     }
   }, agent)
   const { runtime, handle } = fixture
@@ -381,41 +396,52 @@ describe('orchestration worker-start prompt contract', () => {
     })
   })
 
-  it('offers a one-time terminal-send recovery for an unproven OpenCode submission and never re-sends on replay', async () => {
-    vi.useFakeTimers()
-    // OpenCode is not a settlement agent, so its accepted preamble is `observation: 'unsupported'`:
-    // the turn cannot be proven, but the honest receipt is `ready`, never a wedged-looking unknown.
-    const harness = await createPromptContractHarness('swallowed', 'opencode')
-    const pending = harness.dispatcher.dispatch(harness.request)
+  it.each(['opencode', 'deepseek'] as const)(
+    'recovers a swallowed %s Draft with exactly one standalone Enter and never re-sends on replay',
+    async (agent) => {
+      vi.useFakeTimers()
+      // OpenCode/DeepSeek are not settlement agents, so the accepted preamble is
+      // `observation: 'unsupported'`: honest `ready`, never a wedged-looking unknown.
+      const harness = await createPromptContractHarness('swallowed', agent)
+      const pending = harness.dispatcher.dispatch(harness.request)
 
-    await vi.runAllTimersAsync()
-    const first = await pending
-    expect(first).toMatchObject({
-      ok: true,
-      result: {
-        state: 'ready',
-        turnStart: 'unsupported',
-        recovery: expect.stringContaining('terminal read'),
-        mutation: { requestId: harness.requestId, replayed: false }
+      await vi.runAllTimersAsync()
+      const first = await pending
+      expect(first).toMatchObject({
+        ok: true,
+        result: {
+          state: 'ready',
+          turnStart: 'unsupported',
+          recovery: expect.stringContaining('terminal read'),
+          mutation: { requestId: harness.requestId, replayed: false }
+        }
+      })
+      if (!first.ok) {
+        throw new Error(first.error.message)
       }
-    })
-    expect(harness.submittedTurns()).toBe(1)
-    expect(harness.writes.filter((data) => data === '\r')).toHaveLength(1)
+      const preamble = harness.writes.find((data) => data.includes('You are a dispatched worker'))
+      expect(preamble).toEqual(expect.stringContaining('--dispatch-capability dcap_'))
+      expect(preamble).toEqual(expect.stringContaining('--type worker_done'))
+      expect(harness.writes.filter((data) => data.includes('\x1b[200~'))).toHaveLength(1)
+      expect(harness.submittedTurns()).toBe(2)
+      expect(harness.startedTurns()).toBe(1)
+      expect(harness.writes.filter((data) => data === '\r')).toHaveLength(2)
 
-    // Replaying the identical request returns the stored receipt — recovery intact — and sends nothing.
-    const replay = await harness.dispatcher.dispatch(harness.request)
-    expect(replay).toMatchObject({
-      ok: true,
-      result: {
-        state: 'ready',
-        turnStart: 'unsupported',
-        recovery: expect.stringContaining('terminal read'),
-        mutation: { requestId: harness.requestId, replayed: true }
-      }
-    })
-    expect(harness.submittedTurns()).toBe(1)
-    expect(harness.writes.filter((data) => data === '\r')).toHaveLength(1)
-  })
+      const replay = await harness.dispatcher.dispatch(harness.request)
+      expect(replay).toMatchObject({
+        ok: true,
+        result: {
+          state: 'ready',
+          turnStart: 'unsupported',
+          recovery: expect.stringContaining('terminal read'),
+          mutation: { requestId: harness.requestId, replayed: true }
+        }
+      })
+      expect(harness.submittedTurns()).toBe(2)
+      expect(harness.writes.filter((data) => data === '\r')).toHaveLength(2)
+      expect(harness.writes.filter((data) => data.includes('\x1b[200~'))).toHaveLength(1)
+    }
+  )
 
   it('does not attribute output from the old busy turn to a queued prompt', async () => {
     vi.useFakeTimers()
