@@ -142,6 +142,15 @@ describe('agent session option catalog', () => {
     })
   })
 
+  it('forwards an explicit OpenCode model verbatim as a launch --model flag', () => {
+    expect(
+      resolveAgentSessionOptionLaunch('opencode', { model: 'lmstudio/qwen/qwen3-coder-30b' })
+    ).toEqual({
+      args: ['--model', 'lmstudio/qwen/qwen3-coder-30b'],
+      appliedValues: { model: 'lmstudio/qwen/qwen3-coder-30b' }
+    })
+  })
+
   it('passes unknown model and option values through launch mappings', () => {
     expect(
       resolveAgentSessionOptionLaunch('claude', {
