@@ -131,13 +131,17 @@ export const ORCHESTRATION_DISPATCH_METHODS: RpcMethod[] = [
         creator: resolveDispatchCreator(runtime, params.from),
         maxDepth: runtime.getNestedWorkerMaxDepth()
       })
-      const dispatchCapability = params.inject
-        ? db.mintDispatchCapability({
-            dispatchId: ctx.id,
-            paneKey: assigneePaneKey as string,
-            processIncarnation: processIncarnation as string
-          })
-        : undefined
+      // Why: worker_done needs a minted capability for supervised inject and for manual
+      // topologies that already have pane/process identity; context-only dispatches
+      // without that identity stay capability-less.
+      const dispatchCapability =
+        assigneePaneKey && processIncarnation
+          ? db.mintDispatchCapability({
+              dispatchId: ctx.id,
+              paneKey: assigneePaneKey,
+              processIncarnation
+            })
+          : undefined
 
       // Why: built after ctx so dispatchId is the real ctx.id, letting heartbeats attribute liveness to a specific dispatch context, not just a task.
       const preamble = buildDispatchPreamble({
@@ -175,10 +179,16 @@ export const ORCHESTRATION_DISPATCH_METHODS: RpcMethod[] = [
           dispatch: ctx,
           injected,
           preamble,
+          ...(dispatchCapability ? { dispatchCapability } : {}),
           ...(prompt?.prompt ? { prompt: prompt.prompt } : {})
         }
       }
-      return { dispatch: ctx, injected, ...(prompt?.prompt ? { prompt: prompt.prompt } : {}) }
+      return {
+        dispatch: ctx,
+        injected,
+        ...(dispatchCapability ? { dispatchCapability } : {}),
+        ...(prompt?.prompt ? { prompt: prompt.prompt } : {})
+      }
     }
   }),
 

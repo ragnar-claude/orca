@@ -30,4 +30,11 @@ describe('TUI_AGENT_CONFIG', () => {
       expect(TUI_AGENT_CONFIG[agent as TuiAgent]).toMatchObject(expected)
     }
   })
+
+  it('recovers OpenCode and DeepSeek Draft submits without changing DeepSeek launchCmd', () => {
+    expect(TUI_AGENT_CONFIG.opencode.standaloneSubmitRecovery).toBe(true)
+    expect(TUI_AGENT_CONFIG.deepseek.standaloneSubmitRecovery).toBe(true)
+    expect(TUI_AGENT_CONFIG.codex.standaloneSubmitRecovery).toBeUndefined()
+    expect(TUI_AGENT_CONFIG.deepseek.launchCmd).toBe('deepseek --skip-onboarding')
+  })
 })

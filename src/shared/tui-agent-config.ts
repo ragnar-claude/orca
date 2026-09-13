@@ -44,6 +44,8 @@ export type TuiAgentConfig = {
   draftPasteReadyTimeoutMs?: number
   /** Delay before one extra blind submit Enter, for agents that render their composer before Enter is live (codex); a no-op if the first Enter landed. */
   submitRetryDelayMs?: number
+  /** After paste, wait for Draft chrome then send a standalone Enter; retry once only while Draft remains. */
+  standaloneSubmitRecovery?: boolean
   /** Windows Shift+Enter encoding override; omitted agents keep the legacy Esc+CR path. */
   windowsShiftEnterEncoding?: 'csi-u'
   /** Paste newlines for TUIs that read Windows console input records instead of VT paste frames. */
@@ -126,7 +128,10 @@ const TUI_AGENT_CONFIG_SOURCE: Record<TuiAgent, TuiAgentConfigSource> = {
     detectCmd: 'opencode',
     promptInjectionMode: 'flag-prompt',
     // Why: opencode enables bracketed paste before its composer mounts; wait for the post-\x1b[?2004h show-cursor so paste lands.
-    draftPasteReadySignal: 'render-cursor-after-bracketed-paste'
+    draftPasteReadySignal: 'render-cursor-after-bracketed-paste',
+    // Why: multiline PTY paste leaves the OpenCode composer unsent; recover with a standalone Enter, never a second paste.
+    standaloneSubmitRecovery: true,
+    submitRetryDelayMs: 800
   },
   'mimo-code': {
     detectCmd: 'mimo',
@@ -235,7 +240,10 @@ const TUI_AGENT_CONFIG_SOURCE: Record<TuiAgent, TuiAgentConfigSource> = {
     // Why: the `deepseek` dispatcher delegates the interactive session to a sibling
     // `deepseek-tui` binary, so the foreground process is never named `deepseek`.
     expectedProcess: 'deepseek-tui',
-    promptInjectionMode: 'stdin-after-start'
+    promptInjectionMode: 'stdin-after-start',
+    // Why: combined paste+Enter is swallowed as a Draft newline; wait for ┌Draft then send a standalone CR.
+    standaloneSubmitRecovery: true,
+    submitRetryDelayMs: 800
   },
   droid: {
     detectCmd: 'droid',

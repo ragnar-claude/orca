@@ -280,6 +280,62 @@ describe('orchestration RPC methods', () => {
       })
     })
 
+    it('mints a dispatch capability for manual dispatch when pane and process identity exist', async () => {
+      setup()
+      vi.spyOn(runtime, 'getOrchestrationDispatchAuthority').mockReturnValue({
+        runtimeId: runtime.getRuntimeId(),
+        terminalHandle: 'term_a',
+        ptyId: 'pty_a',
+        worktreeId: 'repo::worktree',
+        paneKey: 'tab_w:leaf_w',
+        processIncarnation: 'runtime_test:term_a:1',
+        launchTokenHash: 'launch-token-hash',
+        hostScope: { kind: 'local', hostId: 'local' }
+      })
+      const send = vi.spyOn(runtime, 'sendTerminalAgentPrompt')
+      const task = db.createTask({ spec: 'manual worker_done canary' })
+
+      const result = (await call('orchestration.dispatch', {
+        task: task.id,
+        to: 'term_a',
+        returnPreamble: true
+      })) as {
+        dispatch: { id: string }
+        injected: boolean
+        dispatchCapability: string
+        preamble: string
+      }
+
+      expect(result.injected).toBe(false)
+      expect(send).not.toHaveBeenCalled()
+      expect(result.dispatchCapability).toMatch(/^dcap_/)
+      expect(result.preamble).toContain(`--dispatch-capability ${result.dispatchCapability}`)
+      expect(result.preamble).toContain('--type worker_done')
+      expect(
+        db.verifyDispatchCapability({
+          dispatchId: result.dispatch.id,
+          capability: result.dispatchCapability,
+          paneKey: 'tab_w:leaf_w',
+          processIncarnation: 'runtime_test:term_a:1'
+        })
+      ).toEqual({ valid: true })
+    })
+
+    it('does not mint a capability for context-only dispatch without process authority', async () => {
+      setup()
+      const task = db.createTask({ spec: 'context only' })
+
+      const result = (await call('orchestration.dispatch', {
+        task: task.id,
+        to: 'term_a',
+        returnPreamble: true
+      })) as { dispatch: { id: string }; dispatchCapability?: string; preamble: string }
+
+      expect(result.dispatchCapability).toBeUndefined()
+      expect(result.preamble).not.toContain('--dispatch-capability')
+      expect(db.getDispatchContextById(result.dispatch.id)?.capability_hash).toBeNull()
+    })
+
     it('does not infer manual process authority from an unauthenticated handle', async () => {
       setup()
       const task = db.createTask({ spec: 'work' })
