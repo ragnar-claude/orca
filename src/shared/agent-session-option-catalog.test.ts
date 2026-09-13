@@ -151,6 +151,25 @@ describe('agent session option catalog', () => {
     })
   })
 
+  it('discovers OpenCode models from `opencode models` without leaking id-shape thinking levels', () => {
+    const catalog = getAgentSessionOptionCatalog('opencode')!
+    expect(catalog.listModels!.command).toBe('opencode models')
+    const parsed = catalog.listModels!.parse(
+      'opencode/big-pickle\nomniroute/codex/gpt-5.6-luna\nopencode/mimo-v2.5-free\n'
+    )
+    expect(parsed.map(({ id }) => id)).toEqual([
+      'opencode/big-pickle',
+      'omniroute/codex/gpt-5.6-luna',
+      'opencode/mimo-v2.5-free'
+    ])
+    // OpenCode exposes no per-model effort menu, so every discovered model carries an empty option
+    // set and nothing else — the codex/gpt-5 id must not leak the thinking levels parseLineModels
+    // infers from its shape.
+    expect(parsed.every((model) => model.options.length === 0)).toBe(true)
+    const codex = parsed.find((model) => model.id === 'omniroute/codex/gpt-5.6-luna')!
+    expect(Object.keys(codex).sort()).toEqual(['id', 'label', 'options'])
+  })
+
   it('passes unknown model and option values through launch mappings', () => {
     expect(
       resolveAgentSessionOptionLaunch('claude', {
