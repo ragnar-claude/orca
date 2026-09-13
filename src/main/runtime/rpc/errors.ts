@@ -125,6 +125,14 @@ const STRUCTURED_RUNTIME_PASSTHROUGH_CODES: ReadonlySet<string> = new Set([
   'stale_delivery',
   'waiter_exists',
   'invalid_argument',
+  // LM Studio worker-start admission is a fail-closed pre-allocation contract.
+  // Preserve its typed refusal and split/headroom receipt so the caller can
+  // prove that no Dispatch, worktree, or terminal was created.
+  'endpoint_unreachable',
+  'http_error',
+  'malformed_response',
+  'model_absent',
+  'context_unsafe',
   NESTED_WORKER_DEPTH_EXCEEDED_CODE,
   GIT_DIFF_TOO_LARGE_CODE,
   ARTIFACT_SHARING_DISABLED_CODE,

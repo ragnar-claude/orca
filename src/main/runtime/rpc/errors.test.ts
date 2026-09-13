@@ -276,3 +276,42 @@ describe('nested worker depth cap', () => {
     })
   })
 })
+
+describe('LM Studio worker-start admission', () => {
+  it.each([
+    'endpoint_unreachable',
+    'http_error',
+    'malformed_response',
+    'model_absent',
+    'context_unsafe'
+  ])('keeps %s and its zero-allocation split receipt', (code) => {
+    const failure = mapRuntimeError(
+      'rpc_lm_studio_admission',
+      { runtimeId: 'runtime-1' },
+      new OrchestrationError(code, `LM Studio admission refused (${code})`, {
+        effectsApplied: false,
+        contextWindowTokens: 65_536,
+        inputBudgetTokens: 49_152,
+        reservedToolTokens: 8_192,
+        reservedOutputTokens: 8_192,
+        estimatedInputTokens: 50_000,
+        splitRequired: true,
+        requiredChunks: 2
+      })
+    )
+
+    expect(failure.error).toMatchObject({
+      code,
+      data: {
+        effectsApplied: false,
+        contextWindowTokens: 65_536,
+        inputBudgetTokens: 49_152,
+        reservedToolTokens: 8_192,
+        reservedOutputTokens: 8_192,
+        estimatedInputTokens: 50_000,
+        splitRequired: true,
+        requiredChunks: 2
+      }
+    })
+  })
+})
