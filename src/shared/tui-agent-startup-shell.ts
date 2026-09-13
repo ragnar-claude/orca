@@ -191,7 +191,9 @@ export function unixStartupCommandHasUnquotedZshMetacharacters(command: string):
   }
   return tokenized.tokens.some((token, index) => {
     const span = tokenized.spans[index]
-    return !spanIsQuoted(command, span.start, span.end) && ZSH_ACCEPT_LINE_UNQUOTED_META.test(token)
+    return (
+      !spanIsQuoted(command, span.start, span.end) && ZSH_ACCEPT_LINE_UNQUOTED_META.test(token)
+    )
   })
 }
 

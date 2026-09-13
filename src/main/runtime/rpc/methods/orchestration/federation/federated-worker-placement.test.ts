@@ -22,8 +22,7 @@ function repo(
 }
 
 function worktree(
-  partial: Partial<FederatedPlacementWorktree> &
-    Pick<FederatedPlacementWorktree, 'id' | 'path' | 'repoId'>
+  partial: Partial<FederatedPlacementWorktree> & Pick<FederatedPlacementWorktree, 'id' | 'path' | 'repoId'>
 ): FederatedPlacementWorktree {
   return {
     displayName: partial.repoId,

@@ -151,9 +151,7 @@ describe('one Unix startup dialect', () => {
     const command = ['opencode', '--prompt', quoted].join(' ')
     expect(unixStartupCommandHasUnquotedZshMetacharacters(command)).toBe(false)
     expect(
-      unixStartupCommandHasUnquotedZshMetacharacters(
-        'opencode --prompt ship (the fix) && echo $HOME'
-      )
+      unixStartupCommandHasUnquotedZshMetacharacters('opencode --prompt ship (the fix) && echo $HOME')
     ).toBe(true)
   })
 

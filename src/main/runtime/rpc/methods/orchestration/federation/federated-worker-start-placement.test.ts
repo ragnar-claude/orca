@@ -160,9 +160,7 @@ describe('federated worker start remote placement mapping', () => {
     })) as { state: string }
 
     expect(result.state).toBe('ready')
-    const attach = remoteCall.mock.calls.find(
-      (call) => call[1] === 'orchestration.federationAttachStart'
-    )
+    const attach = remoteCall.mock.calls.find((call) => call[1] === 'orchestration.federationAttachStart')
     expect(attach?.[2]).toMatchObject({
       worktree: 'id:hub-m5::/Users/oliver/hub'
     })
