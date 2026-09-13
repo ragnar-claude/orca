@@ -29,9 +29,10 @@ export async function submitAgentPromptWithStandaloneRecovery(args: {
   wait: (ms: number) => Promise<void>
   assertStillWritable: () => void
 }): Promise<number> {
-  const recovery = agentHasStandaloneSubmitRecovery(args.agent)
+  const agent = args.agent
+  const recovery = agentHasStandaloneSubmitRecovery(agent)
   if (recovery) {
-    await waitForStandaloneSubmitDraft(args, getStandaloneSubmitRetryDelayMs(args.agent))
+    await waitForStandaloneSubmitDraft(args, getStandaloneSubmitRetryDelayMs(agent))
   }
   args.assertStillWritable()
   if (!args.writeSubmit()) {
@@ -41,7 +42,7 @@ export async function submitAgentPromptWithStandaloneRecovery(args: {
   if (!recovery) {
     return submits
   }
-  await args.wait(getStandaloneSubmitRetryDelayMs(args.agent))
+  await args.wait(getStandaloneSubmitRetryDelayMs(agent))
   args.assertStillWritable()
   if (!isStandaloneSubmitDraftVisible(args.readWaitText())) {
     return submits

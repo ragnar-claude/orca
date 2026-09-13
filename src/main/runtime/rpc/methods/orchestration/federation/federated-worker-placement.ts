@@ -100,10 +100,7 @@ function selectorNamesHermes(selector: string): boolean {
   return Boolean(path && isHermesCheckoutPath(path)) || /hermes/i.test(selector)
 }
 
-function matchesSelector(
-  worktree: FederatedPlacementWorktree,
-  selector: string
-): boolean {
+function matchesSelector(worktree: FederatedPlacementWorktree, selector: string): boolean {
   if (selector.startsWith('identity:')) {
     return worktree.identity?.key === selector.slice('identity:'.length)
   }
@@ -239,7 +236,7 @@ export async function translateFederatedWorktreeSelector(args: {
   selector: string
   targetEnvironmentId: string
   timeoutMs: number
-  pairingFence: { expectedEnvironmentPairingRevision: number }
+  pairingFence: { expectedEnvironmentPairingRevision?: number }
 }): Promise<string> {
   if (!federatedWorktreeSelectorNeedsTranslation(args.selector)) {
     return args.selector
