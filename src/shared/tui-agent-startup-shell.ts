@@ -157,9 +157,64 @@ export function tokenizeStartupCommand(
   // quoteStartupArg before the line is built. Parsing it differently per shell
   // would make the same setting mean different things in different workspaces.
   // (Windows is genuinely different: cmd/PowerShell re-parse the built line.)
-  return isWindowsStartupShell(shell)
-    ? tokenizeWindowsStartupCommand(value, shell)
-    : tokenizeCustomCommandTemplate(value)
+  if (isWindowsStartupShell(shell)) {
+    return tokenizeWindowsStartupCommand(value, shell)
+  }
+  const tokenized = tokenizeCustomCommandTemplate(value)
+  if (!tokenized.ok) {
+    return tokenized
+  }
+  // Why: zsh BUFFER/accept-line still parses unquoted `()` as grouping/glob
+  // even though the portable Unix tokenizer otherwise treats them as bytes.
+  return {
+    ok: true,
+    tokens: tokenized.tokens,
+    spans: tokenized.spans.map((span, index) => ({
+      ...span,
+      divergesFromShell: span.divergesFromShell || /[(){}]/.test(tokenized.tokens[index] ?? '')
+    }))
+  }
+}
+
+const ZSH_ACCEPT_LINE_UNQUOTED_META = /[()$`;&|<>]/
+
+function spanIsQuoted(command: string, start: number, end: number): boolean {
+  const raw = command.slice(start, end)
+  return raw.startsWith("'") || raw.startsWith('"')
+}
+
+/** True when zsh `BUFFER=$cmd; zle accept-line` would still see live `(`, `$()`, or operators. */
+export function unixStartupCommandHasUnquotedZshMetacharacters(command: string): boolean {
+  const tokenized = tokenizeStartupCommand(command, 'posix')
+  if (!tokenized.ok) {
+    return true
+  }
+  return tokenized.tokens.some((token, index) => {
+    const span = tokenized.spans[index]
+    return !spanIsQuoted(command, span.start, span.end) && ZSH_ACCEPT_LINE_UNQUOTED_META.test(token)
+  })
+}
+
+export function quoteUnixStartupCommandLine(command: string, shell: AgentStartupShell): string {
+  if (!isPosixStartupShell(shell)) {
+    return command
+  }
+  const tokenized = tokenizeStartupCommand(command, shell)
+  if (!tokenized.ok) {
+    return command
+  }
+  return tokenized.tokens
+    .map((token, index) => {
+      const span = tokenized.spans[index]
+      if (
+        spanIsQuoted(command, span.start, span.end) ||
+        ZSH_ACCEPT_LINE_UNQUOTED_META.test(token)
+      ) {
+        return quoteStartupArg(token, shell)
+      }
+      return token
+    })
+    .join(' ')
 }
 
 export function resolveStartupShell(
