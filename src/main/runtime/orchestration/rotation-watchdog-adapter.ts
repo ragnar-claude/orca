@@ -3,12 +3,36 @@
  * Serving hook for /root/orca-control/rotation-watchdog.
  * Does not edit worker-lifecycle, resource-admission, or personality/SOUL files.
  */
+import { TOKEN_ROTATION_THRESHOLD } from './rotation-watchdog-snapshot'
+
 export const EXACT_ORCA_PATH = '/root'
 export const MODULE_ROOT = '/root/orca-control/rotation-watchdog'
 export const SERVING_PROMOTION_HOOK = 'src/main/runtime/orchestration/rotation-watchdog-adapter.ts'
 export const WORKTREE = 'id:22f53ae4-562e-43c9-907f-62ce3da5c07b::/root'
-export const TOKEN_ROTATION_THRESHOLD = 120_000
 export const SCHEMA = 'livewell.orca.rotation-watchdog-adapter.v1'
+
+export {
+  CHECKPOINT_TASK_STATUSES,
+  CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT,
+  LOCAL_MODEL_CONTEXT_WINDOW_TOKENS,
+  LOCAL_MODEL_FALLBACKS,
+  LOCAL_MODEL_INPUT_BUDGET_TOKENS,
+  LOCAL_MODEL_RESERVED_OUTPUT_TOKENS,
+  LOCAL_MODEL_RESERVED_TOOL_TOKENS,
+  TOKEN_ROTATION_THRESHOLD,
+  admitPrelaunchContext,
+  enumerateCheckpointTasks,
+  evaluateRotationTelemetry,
+  parseContextTelemetry
+} from './rotation-watchdog-snapshot'
+export type {
+  CheckpointTask,
+  CheckpointTaskPage,
+  ContextTelemetry,
+  LocalModelInventoryRecord,
+  PrelaunchContextAdmission,
+  RotationTelemetryMetrics
+} from './rotation-watchdog-snapshot'
 
 export const FORBIDDEN_OVERLAP_MARKERS = [
   'worker-lifecycle-policy',
@@ -32,6 +56,10 @@ export const SERVING_PROMOTION_CONTRACT = {
     'verifyFreshTakeover',
     'closeThenArchive',
     'assertSoleSourceOwner',
+    'parseContextTelemetry',
+    'evaluateRotationTelemetry',
+    'admitPrelaunchContext',
+    'enumerateCheckpointTasks',
     'SERVING_PROMOTION_CONTRACT'
   ],
   forbidden_imports: [...FORBIDDEN_OVERLAP_MARKERS],
@@ -39,7 +67,8 @@ export const SERVING_PROMOTION_CONTRACT = {
     'acknowledge mailbox in preflight',
     'edit worker-lifecycle-policy',
     'edit resource-admission',
-    'admit local-model/Qwen',
+    'allocate local-model/Qwen resources',
+    'arm execute rotation mode',
     'stop or release active workers',
     'touch personality/SOUL/PHI',
     'mutate /root/prod git'
@@ -114,7 +143,13 @@ export function planCheckpointNotification(args: {
   triggered: boolean
   reasons: readonly string[]
   recipient: string
-}): { planned: boolean; type: 'handoff'; subject: string; body: string; recipient: string } {
+}): {
+  planned: boolean
+  type: 'handoff'
+  subject: string
+  body: string
+  recipient: string
+} {
   return {
     planned: args.triggered,
     type: 'handoff',
