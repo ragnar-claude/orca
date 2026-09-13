@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AGENT_PROMPT_BRACKETED_PASTE_END } from '../../../../../../shared/agent-prompt-injection'
 import { ORCHESTRATION_CONTRACT_VERSION } from '../../../../../../shared/protocol-version'
+import type { TuiAgent } from '../../../../../../shared/tui-agent'
 import {
   AGENT_PROMPT_TEST_WORKTREE_ID,
   createAgentPromptSubmissionRuntime
@@ -56,7 +57,8 @@ type PromptContractHarness = {
 }
 
 async function createPromptContractHarness(
-  outcome: 'accepted' | 'swallowed'
+  outcome: 'accepted' | 'swallowed',
+  agent: TuiAgent = 'codex'
 ): Promise<PromptContractHarness> {
   let composerReady = false
   let submittedTurns = 0
@@ -83,7 +85,7 @@ async function createPromptContractHarness(
       startedTurns += 1
       runtime.onPtyData('pty-prompt', '\x1b]0;Codex working\x07', Date.now())
     }
-  }, 'codex')
+  }, agent)
   const { runtime, handle } = fixture
   runtime.onPtyData('pty-prompt', '\x1b]0;Codex idle\x07', Date.now())
 
@@ -149,7 +151,7 @@ async function createPromptContractHarness(
         from: 'term_coord',
         worktree: 'new-child',
         name: `prompt-contract-${outcome}`,
-        agent: 'codex'
+        agent
       }
     },
     requestId: `${REQUEST_ID}_${outcome}`,
@@ -205,6 +207,9 @@ describe('orchestration worker-start prompt contract', () => {
       throw new Error(response.error.message)
     }
     const dispatchId = (response.result as { dispatchId: string }).dispatchId
+    // A proven turn must not carry the unproven-submission recovery hint: locks the
+    // `turnStart === 'unsupported'` half of the gate against a future loosening.
+    expect((response.result as { recovery?: string }).recovery).toBeUndefined()
     expect(harness.submittedTurns()).toBe(1)
     expect(harness.startedTurns()).toBe(1)
     expect(harness.prematureSubmits()).toBe(0)
@@ -374,6 +379,42 @@ describe('orchestration worker-start prompt contract', () => {
         stages: ['input_accepted']
       }
     })
+  })
+
+  it('offers a one-time terminal-send recovery for an unproven OpenCode submission and never re-sends on replay', async () => {
+    vi.useFakeTimers()
+    // OpenCode is not a settlement agent, so its accepted preamble is `observation: 'unsupported'`:
+    // the turn cannot be proven, but the honest receipt is `ready`, never a wedged-looking unknown.
+    const harness = await createPromptContractHarness('swallowed', 'opencode')
+    const pending = harness.dispatcher.dispatch(harness.request)
+
+    await vi.runAllTimersAsync()
+    const first = await pending
+    expect(first).toMatchObject({
+      ok: true,
+      result: {
+        state: 'ready',
+        turnStart: 'unsupported',
+        recovery: expect.stringContaining('terminal read'),
+        mutation: { requestId: harness.requestId, replayed: false }
+      }
+    })
+    expect(harness.submittedTurns()).toBe(1)
+    expect(harness.writes.filter((data) => data === '\r')).toHaveLength(1)
+
+    // Replaying the identical request returns the stored receipt — recovery intact — and sends nothing.
+    const replay = await harness.dispatcher.dispatch(harness.request)
+    expect(replay).toMatchObject({
+      ok: true,
+      result: {
+        state: 'ready',
+        turnStart: 'unsupported',
+        recovery: expect.stringContaining('terminal read'),
+        mutation: { requestId: harness.requestId, replayed: true }
+      }
+    })
+    expect(harness.submittedTurns()).toBe(1)
+    expect(harness.writes.filter((data) => data === '\r')).toHaveLength(1)
   })
 
   it('does not attribute output from the old busy turn to a queued prompt', async () => {

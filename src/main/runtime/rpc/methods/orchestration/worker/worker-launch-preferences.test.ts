@@ -27,6 +27,21 @@ describe('orchestration worker launch preferences', () => {
     })
   })
 
+  it('forwards an explicit OpenCode model to worker-start with matching launch.requested and launch.effective', () => {
+    expect(
+      resolveWorkerLaunchPreferences({
+        agent: 'opencode',
+        model: 'lmstudio/qwen/qwen3-coder-30b'
+      })
+    ).toEqual({
+      preferences: { model: 'lmstudio/qwen/qwen3-coder-30b' },
+      receipt: {
+        requested: { agent: 'opencode', model: 'lmstudio/qwen/qwen3-coder-30b', effort: null },
+        effective: { agent: 'opencode', model: 'lmstudio/qwen/qwen3-coder-30b', effort: null }
+      }
+    })
+  })
+
   it('does not invent an effort when only a model is requested', () => {
     expect(
       resolveWorkerLaunchPreferences({ agent: 'codex', model: 'gpt-5.6-sol' }).preferences

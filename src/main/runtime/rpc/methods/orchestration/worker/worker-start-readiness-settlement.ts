@@ -136,6 +136,16 @@ export async function deliverAndSettleWorkerStartReadiness(args: {
     worker.stage === 'settled' && (worker.state === 'succeeded' || worker.state === 'failed')
       ? worker.state
       : undefined
+  // 'unsupported' means the write was accepted but this provider proves no turn: a ready worker
+  // whose submission is unverifiable. Name the canonical, idempotent re-check — replaying this
+  // worker-start reuses the request id and re-sends nothing, so recovery can never double-send.
+  const recovery =
+    turnStart.verdict === 'unsupported' && !reportedOutcome
+      ? `Dispatch input was written and submitted, but ${args.agent ?? 'this provider'} exposes ` +
+        `no turn-start signal, so submission stays unproven. Read what landed with: orca terminal ` +
+        `read --terminal ${terminalHandle} --screen. Re-running this worker-start reuses request ` +
+        `id ${args.requestId} and returns this same receipt without sending the prompt again.`
+      : undefined
   return {
     runId: run.id,
     taskId: task.id,
@@ -151,6 +161,7 @@ export async function deliverAndSettleWorkerStartReadiness(args: {
     effects,
     ...(deliveredPrompt ? { prompt: deliveredPrompt } : {}),
     residualResources: [],
+    ...(recovery ? { recovery } : {}),
     ...(args.terminalRevealWarning ? { warning: args.terminalRevealWarning } : {})
   }
 }
