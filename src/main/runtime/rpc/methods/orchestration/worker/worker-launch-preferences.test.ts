@@ -42,6 +42,29 @@ describe('orchestration worker launch preferences', () => {
     })
   })
 
+  it('forwards a discovered OpenCode model id verbatim and refuses effort it has no menu for', () => {
+    // A `provider/model` id surfaced by `opencode models` discovery launches unchanged: OpenCode
+    // never gates membership, so the picked id is exactly the launched id — requested === effective.
+    expect(
+      resolveWorkerLaunchPreferences({ agent: 'opencode', model: 'omniroute/codex/gpt-5.6-luna' })
+    ).toEqual({
+      preferences: { model: 'omniroute/codex/gpt-5.6-luna' },
+      receipt: {
+        requested: { agent: 'opencode', model: 'omniroute/codex/gpt-5.6-luna', effort: null },
+        effective: { agent: 'opencode', model: 'omniroute/codex/gpt-5.6-luna', effort: null }
+      }
+    })
+    // OpenCode has no per-model effort menu (empty seed, no unknownModelOptions), so a codex-shaped
+    // id must not inherit the Codex effort ceiling — the effort is refused, not silently applied.
+    expect(() =>
+      resolveWorkerLaunchPreferences({
+        agent: 'opencode',
+        model: 'omniroute/codex/gpt-5.6-luna',
+        effort: 'high'
+      })
+    ).toThrow('does not support effort high')
+  })
+
   it('does not invent an effort when only a model is requested', () => {
     expect(
       resolveWorkerLaunchPreferences({ agent: 'codex', model: 'gpt-5.6-sol' }).preferences
