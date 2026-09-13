@@ -4,6 +4,7 @@ import {
   clearEnvCommand,
   commandSeparator,
   quoteStartupArg,
+  quoteUnixStartupCommandLine,
   resolveStartupShell,
   type AgentStartupShell
 } from './tui-agent-startup-shell'
@@ -83,7 +84,7 @@ export function buildAgentStartupPlan(args: {
     }
     return {
       agent,
-      launchCommand: baseCommand.command,
+      launchCommand: quoteUnixStartupCommandLine(baseCommand.command, shell),
       expectedProcess: config.expectedProcess,
       followupPrompt: null,
       launchConfig,
@@ -98,7 +99,10 @@ export function buildAgentStartupPlan(args: {
     const promptSeparator = config.argvPromptSeparator ? ` ${config.argvPromptSeparator}` : ''
     return {
       agent,
-      launchCommand: `${baseCommand.command}${promptSeparator} ${quotedPrompt}`,
+      launchCommand: quoteUnixStartupCommandLine(
+        `${baseCommand.command}${promptSeparator} ${quotedPrompt}`,
+        shell
+      ),
       expectedProcess: config.expectedProcess,
       followupPrompt: null,
       launchConfig,
@@ -111,7 +115,10 @@ export function buildAgentStartupPlan(args: {
   if (config.promptInjectionMode === 'flag-prompt') {
     return {
       agent,
-      launchCommand: `${baseCommand.command} --prompt ${quotedPrompt}`,
+      launchCommand: quoteUnixStartupCommandLine(
+        `${baseCommand.command} --prompt ${quotedPrompt}`,
+        shell
+      ),
       expectedProcess: config.expectedProcess,
       followupPrompt: null,
       launchConfig,
@@ -149,7 +156,10 @@ export function buildAgentStartupPlan(args: {
   if (config.promptInjectionMode === 'flag-prompt-interactive') {
     return {
       agent,
-      launchCommand: `${baseCommand.command} --prompt-interactive ${quotedPrompt}`,
+      launchCommand: quoteUnixStartupCommandLine(
+        `${baseCommand.command} --prompt-interactive ${quotedPrompt}`,
+        shell
+      ),
       expectedProcess: config.expectedProcess,
       followupPrompt: null,
       launchConfig,
@@ -161,7 +171,10 @@ export function buildAgentStartupPlan(args: {
   if (config.promptInjectionMode === 'flag-interactive') {
     return {
       agent,
-      launchCommand: `${baseCommand.command} -i ${quotedPrompt}`,
+      launchCommand: quoteUnixStartupCommandLine(
+        `${baseCommand.command} -i ${quotedPrompt}`,
+        shell
+      ),
       expectedProcess: config.expectedProcess,
       followupPrompt: null,
       launchConfig,
@@ -172,7 +185,7 @@ export function buildAgentStartupPlan(args: {
 
   return {
     agent,
-    launchCommand: baseCommand.command,
+    launchCommand: quoteUnixStartupCommandLine(baseCommand.command, shell),
     expectedProcess: config.expectedProcess,
     followupPrompt: trimmedPrompt,
     launchConfig,

@@ -8,7 +8,10 @@ import {
 } from './tui-agent-startup'
 import { TUI_AGENT_CONFIG } from './tui-agent-config'
 import { normalizeTuiAgentArgsRecord, resolveTuiAgentLaunchArgs } from './tui-agent-launch-defaults'
-import { tokenizeStartupCommand } from './tui-agent-startup-shell'
+import {
+  tokenizeStartupCommand,
+  unixStartupCommandHasUnquotedZshMetacharacters
+} from './tui-agent-startup-shell'
 import {
   unwrapPosixShellScript,
   unwrapPowerShellScript
@@ -537,6 +540,17 @@ describe('tui agent startup plans', () => {
     })
 
     expect(plan?.launchCommand).toBe("opencode --prompt 'fix it'")
+  })
+
+  it('quotes opencode --prompt text so zsh accept-line does not parse parentheses as a subshell', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'opencode',
+      prompt: 'ship (the fix) && echo $HOME',
+      cmdOverrides: {},
+      platform: 'linux'
+    })
+    expect(plan?.launchCommand).toBe("opencode --prompt 'ship (the fix) && echo $HOME'")
+    expect(unixStartupCommandHasUnquotedZshMetacharacters(plan?.launchCommand ?? '')).toBe(false)
   })
 
   it('keeps opencode and mimo-code on the cursor-gated paste draft route', () => {

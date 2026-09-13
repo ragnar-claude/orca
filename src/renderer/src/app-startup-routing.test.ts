@@ -592,6 +592,7 @@ describe('renderer startup runtime routing', () => {
     expect(checkpointBlock).toContain(
       'isIntentionalAppRestartInProgress() || isWindowCloseCheckpointInProgress()'
     )
+    expect(checkpointBlock).toContain('isWindowCloseCheckpointInProgress,')
     expect(checkpointBlock).toContain(
       'useAppStore.getState().openFiles.some((file) => file.isDirty)'
     )

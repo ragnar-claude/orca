@@ -32,6 +32,7 @@ import {
   isKnownRemoteStartFailure
 } from './federated-worker-start-receipts'
 import { parseTaskDeps } from '../worker/task-deps-argument'
+import { translateFederatedWorktreeSelector } from './federated-worker-placement'
 
 export async function startFederatedWorker(args: {
   params: WorkerStartInput
@@ -59,14 +60,14 @@ export async function startFederatedWorker(args: {
       'Remote worker-start requires a durable retry request.'
     )
   }
-  const worktree = params.worktree ?? 'current'
-  if (worktree === 'current' || worktree === 'new-child') {
+  const requestedWorktree = params.worktree ?? 'current'
+  if (requestedWorktree === 'current' || requestedWorktree === 'new-child') {
     throw new OrchestrationError(
       'invalid_argument',
       '--on requires an exact remote worktree selector or new-top-level.'
     )
   }
-  const createsWorktree = worktree === 'new-top-level'
+  const createsWorktree = requestedWorktree === 'new-top-level'
   assertWorkerLaunchPreferencesCreateTerminal(params)
   validateFederatedWorkerStartPlacement(params, createsWorktree)
   const requestedLaunch = createPendingWorkerLaunchReceipt({
@@ -116,6 +117,15 @@ export async function startFederatedWorker(args: {
         : 1
 
   const setupDecision = createsWorktree ? (params.setup ?? 'run') : 'not_applicable'
+  const worktree = createsWorktree
+    ? requestedWorktree
+    : await translateFederatedWorktreeSelector({
+        runtime,
+        selector: requestedWorktree,
+        targetEnvironmentId: server.environmentId,
+        timeoutMs: budgets.preflightTimeoutMs,
+        pairingFence
+      })
   const started = db.createStartingWorkerDispatch({
     creator: resolveDispatchCreator(runtime, params.from),
     maxDepth: runtime.getNestedWorkerMaxDepth(),

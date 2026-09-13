@@ -5,7 +5,8 @@ import {
   commandSeparator,
   isPosixStartupShell,
   quoteStartupArg,
-  tokenizeStartupCommand
+  tokenizeStartupCommand,
+  unixStartupCommandHasUnquotedZshMetacharacters
 } from './tui-agent-startup-shell'
 import { buildAgentDraftLaunchPlan } from './tui-agent-startup'
 
@@ -127,11 +128,33 @@ describe('one Unix startup dialect', () => {
       "it's mine",
       'ends\\',
       'a "b" c',
-      '$PATH *.ts'
+      '$PATH *.ts',
+      'ship (the fix) && echo $HOME'
     ]) {
       const tokenized = tokenizeStartupCommand(quoteStartupArg(value, 'posix'), 'posix')
       expect(tokenized.ok && tokenized.tokens).toEqual([value])
     }
+  })
+
+  it('marks bare parentheses as live zsh syntax so BUFFER/accept-line cannot treat them as argv', () => {
+    const result = tokenizeStartupCommand('opencode --prompt ship (the fix)', 'posix')
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.spans.some((span) => span.divergesFromShell)).toBe(true)
+  })
+
+  it('quotes parentheses and shell-sensitive text so a zsh BUFFER line has no unquoted metacharacters', () => {
+    const quoted = quoteStartupArg('ship (the fix) && echo $HOME', 'posix')
+    expect(quoted).toBe("'ship (the fix) && echo $HOME'")
+    const command = ['opencode', '--prompt', quoted].join(' ')
+    expect(unixStartupCommandHasUnquotedZshMetacharacters(command)).toBe(false)
+    expect(
+      unixStartupCommandHasUnquotedZshMetacharacters(
+        'opencode --prompt ship (the fix) && echo $HOME'
+      )
+    ).toBe(true)
   })
 
   it('clears an agent draft prefill variable with the portable teardown', () => {

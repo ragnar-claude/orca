@@ -211,6 +211,7 @@ export function useAppSessionPersistence(): void {
       // the user could only complete with SIGKILL, which loses strictly more (#15352).
       isDegradableShutdownInProgress: () =>
         isIntentionalAppRestartInProgress() || isWindowCloseCheckpointInProgress(),
+      isWindowCloseCheckpointInProgress,
       stageBeforeUnloadSync: (args) => window.api.app.stageBeforeUnloadSync(args)
     })
     const shutdownCheckpoint = createShutdownCheckpointGuard(
