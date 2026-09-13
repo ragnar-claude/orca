@@ -295,6 +295,26 @@ describe('mobile session terminal persistence retirement', () => {
     expect(untrustedReplacement.terminalPtyIncarnationsByPaneKey).toBeUndefined()
   })
 
+  it('normalizes a session:set legacy null tab partition after a topology mutation', () => {
+    const prior = {
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: { [WORKTREE_ID]: [] },
+      terminalTopologyRevisionByRepoId: { [REPO_ID]: 1 }
+    }
+    const incoming = {
+      ...getDefaultWorkspaceSession(),
+      tabsByWorktree: null,
+      terminalPtyIncarnationsByPaneKey: { 'terminal:left': 'retired-incarnation' }
+    }
+
+    // @ts-expect-error Legacy session payloads can contain a serialized null partition.
+    const result = sanitizeWorkspaceSessionTerminalRetirements(incoming, prior)
+
+    expect(result.tabsByWorktree).toEqual({ [WORKTREE_ID]: [] })
+    expect(result.terminalTopologyRevisionByRepoId).toEqual({ [REPO_ID]: 1 })
+    expect(result.terminalPtyIncarnationsByPaneKey).toBeUndefined()
+  })
+
   it('rebases a host partition that no longer carries the closed web-terminal layout', () => {
     const tabId = 'web-terminal-24aa462c-589c-45fa-b332-6aa233cd84cf'
     const prior = {
