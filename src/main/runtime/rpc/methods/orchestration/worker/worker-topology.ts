@@ -69,7 +69,11 @@ export async function createExistingWorktreeWorkerTerminal(args: {
     // desktop app while its CLI is `cursor-agent`. Let the runtime build the
     // configured launcher instead of executing the raw id.
     startupAgent: args.agent,
-    ...(args.launchPreferences ? { launchPreferences: args.launchPreferences } : {}),
+    // An explicit empty object means "resolve the provider's configured/live default". Omitting
+    // this field lets terminal creation inherit a persisted session selection, which can silently
+    // reintroduce a stale model even though worker-start's requested/effective receipt is null.
+    // This affects only the new terminal; reused sessions retain their existing selection.
+    launchPreferences: args.launchPreferences ?? {},
     title: `worker-${args.taskId}`,
     // Why: dispatching a worker is background work; it must not pull the sidebar
     // to the worker's workspace while the user is reading somewhere else.

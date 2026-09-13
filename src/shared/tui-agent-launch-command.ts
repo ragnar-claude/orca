@@ -79,9 +79,16 @@ export function resolveAgentLaunchCommand(args: {
   const optionSuffix = resolvedOptions.args.map((arg) => quoteStartupArg(arg, args.shell)).join(' ')
   const commandWithoutSessionOptions = suffix.suffix ? `${command} ${suffix.suffix}` : command
   const commandWithOptions = optionSuffix ? `${command} ${optionSuffix}` : command
+  // A caller can explicitly request the provider/configured default with an empty options object.
+  // Give the catalog remover a model-shaped sentinel solely for removal in that case: it strips
+  // the provider's model flag from persisted agent args without emitting a replacement model or
+  // disturbing unrelated args. Non-empty explicit preferences keep their ordinary exact values.
+  const overriddenValues =
+    args.sessionOptions ??
+    (args.sessionOptionsOverrideAgentArgs ? { model: '__orca_provider_default__' } : undefined)
   const overrideTokens = args.sessionOptionsOverrideAgentArgs
     ? insertBeforeTerminator(
-        removeOverriddenAgentSessionArgs(args.agent, args.sessionOptions, trailingTokens.tokens),
+        removeOverriddenAgentSessionArgs(args.agent, overriddenValues, trailingTokens.tokens),
         resolvedOptions.args
       )
     : []

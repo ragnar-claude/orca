@@ -205,7 +205,11 @@ export class OrcaRuntimeWithResolveWorktreeRemovalTarget extends OrcaRuntimeWith
       agentArgs: resolveTuiAgentLaunchArgs(agent, settings.agentDefaultArgs),
       agentEnv: resolveTuiAgentLaunchEnv(agent, settings.agentDefaultEnv),
       sessionOptions,
-      sessionOptionsOverrideAgentArgs: Boolean(sessionOptions),
+      // Presence is the caller's authority signal even when the object is empty: an explicit
+      // empty preference means use the provider's configured/live default, so catalog-managed
+      // options must be removed from persisted agentDefaultArgs instead of resurrecting a stale
+      // model. Unrelated default args remain intact, and an omitted field keeps legacy behavior.
+      sessionOptionsOverrideAgentArgs: opts.launchPreferences !== undefined,
       platform,
       shell: queuedShell,
       isRemote,

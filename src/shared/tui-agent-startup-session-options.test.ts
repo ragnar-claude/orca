@@ -54,6 +54,20 @@ describe('tui agent startup session options', () => {
     expect(plan?.sessionOptions).toEqual({ model: 'custom-codex-model', effort: 'high' })
   })
 
+  it('clears a persisted model for an explicit provider default while preserving unrelated args', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'opencode',
+      prompt: '',
+      cmdOverrides: {},
+      platform: 'linux',
+      allowEmptyPromptLaunch: true,
+      sessionOptionsOverrideAgentArgs: true,
+      agentArgs: '--model provider/stale-model --continue'
+    })
+    expect(plan?.launchCommand).toBe("opencode '--continue'")
+    expect(plan?.sessionOptions).toBeUndefined()
+  })
+
   it('inserts worker preferences before an argument terminator', () => {
     const plan = buildAgentStartupPlan({
       agent: 'codex',

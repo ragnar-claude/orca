@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { getAgentSessionOptionCatalog } from '../../../../../../shared/agent-session-option-catalog'
 import { ORCHESTRATION_WORKER_LAUNCH_PREFERENCES_RUNTIME_CAPABILITY } from '../../../../../../shared/protocol-version'
 import {
@@ -9,6 +9,7 @@ import {
   resolveWorkerLaunchPreferences
 } from './worker-launch-preferences'
 import { WorkerStartParams } from './worker-start-schema'
+import { createExistingWorktreeWorkerTerminal } from './worker-topology'
 
 describe('orchestration worker launch preferences', () => {
   it('passes an opaque Claude model and portable effort through the shared catalog', () => {
@@ -27,17 +28,51 @@ describe('orchestration worker launch preferences', () => {
     })
   })
 
+  it('leaves an unrequested OpenCode model unset so the provider resolves its live default', () => {
+    expect(resolveWorkerLaunchPreferences({ agent: 'opencode' })).toEqual({
+      preferences: undefined,
+      receipt: {
+        requested: { agent: 'opencode', model: null, effort: null },
+        effective: { agent: 'opencode', model: null, effort: null }
+      }
+    })
+  })
+
+  it('explicitly resets inherited terminal preferences for a fresh default-model worker', async () => {
+    const createTerminal = vi.fn().mockResolvedValue({
+      handle: 'term_fresh',
+      surface: 'background',
+      warning: undefined
+    })
+    const effects: Parameters<typeof createExistingWorktreeWorkerTerminal>[0]['effects'] = []
+
+    await createExistingWorktreeWorkerTerminal({
+      runtime: { createTerminal } as never,
+      worktreeId: 'repo::worktree',
+      agent: 'opencode',
+      taskId: 'task_fresh',
+      effects
+    })
+
+    expect(createTerminal).toHaveBeenCalledWith('id:repo::worktree', {
+      startupAgent: 'opencode',
+      launchPreferences: {},
+      title: 'worker-task_fresh',
+      surfaceOwner: false
+    })
+  })
+
   it('forwards an explicit OpenCode model to worker-start with matching launch.requested and launch.effective', () => {
     expect(
       resolveWorkerLaunchPreferences({
         agent: 'opencode',
-        model: 'lmstudio/qwen/qwen3-coder-30b'
+        model: 'provider/explicit-model'
       })
     ).toEqual({
-      preferences: { model: 'lmstudio/qwen/qwen3-coder-30b' },
+      preferences: { model: 'provider/explicit-model' },
       receipt: {
-        requested: { agent: 'opencode', model: 'lmstudio/qwen/qwen3-coder-30b', effort: null },
-        effective: { agent: 'opencode', model: 'lmstudio/qwen/qwen3-coder-30b', effort: null }
+        requested: { agent: 'opencode', model: 'provider/explicit-model', effort: null },
+        effective: { agent: 'opencode', model: 'provider/explicit-model', effort: null }
       }
     })
   })
