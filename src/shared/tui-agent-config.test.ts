@@ -23,7 +23,10 @@ describe('TUI_AGENT_CONFIG', () => {
       'claude-agent-teams': { launchCmd: 'orca claude-teams', expectedProcess: 'claude' },
       kiro: { launchCmd: 'kiro-cli chat --tui', expectedProcess: 'kiro-cli' },
       'command-code': { launchCmd: 'command-code --trust' },
-      deepseek: { launchCmd: 'deepseek --skip-onboarding', expectedProcess: 'deepseek-tui' },
+      deepseek: {
+        launchCmd: 'deepseek run --yolo --skip-onboarding --fresh',
+        expectedProcess: 'deepseek-tui'
+      },
       hermes: { launchCmd: 'hermes --tui' }
     }
     for (const [agent, expected] of Object.entries(overrides)) {
@@ -35,6 +38,8 @@ describe('TUI_AGENT_CONFIG', () => {
     expect(TUI_AGENT_CONFIG.opencode.standaloneSubmitRecovery).toBe(true)
     expect(TUI_AGENT_CONFIG.deepseek.standaloneSubmitRecovery).toBe(true)
     expect(TUI_AGENT_CONFIG.codex.standaloneSubmitRecovery).toBeUndefined()
-    expect(TUI_AGENT_CONFIG.deepseek.launchCmd).toBe('deepseek --skip-onboarding')
+    expect(TUI_AGENT_CONFIG.deepseek.launchCmd).toBe(
+      'deepseek run --yolo --skip-onboarding --fresh'
+    )
   })
 })

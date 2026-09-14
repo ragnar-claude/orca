@@ -235,8 +235,10 @@ const TUI_AGENT_CONFIG_SOURCE: Record<TuiAgent, TuiAgentConfigSource> = {
     // Why: the npm package installs both shims on PATH and the launcher runs as
     // `deepseek-tui`, so without the alias PATH detection misses wrapped installs.
     detectCmdAliases: ['deepseek-tui'],
-    // Why: `--skip-onboarding` stops the first-run onboarding flow from consuming the task text.
-    launchCmd: 'deepseek --skip-onboarding',
+    // Why: `run` selects the hosted interactive flow, `--yolo` enables agent tools and shell
+    // execution, `--skip-onboarding` prevents the first-run flow from consuming task text, and
+    // `--fresh` prevents a crash-recovery checkpoint from inheriting stale composer state.
+    launchCmd: 'deepseek run --yolo --skip-onboarding --fresh',
     // Why: the `deepseek` dispatcher delegates the interactive session to a sibling
     // `deepseek-tui` binary, so the foreground process is never named `deepseek`.
     expectedProcess: 'deepseek-tui',

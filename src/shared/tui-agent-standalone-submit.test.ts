@@ -12,7 +12,9 @@ describe('standalone submit recovery', () => {
     expect(agentHasStandaloneSubmitRecovery('deepseek')).toBe(true)
     expect(agentHasStandaloneSubmitRecovery('codex')).toBe(false)
     expect(agentHasStandaloneSubmitRecovery('mimo-code')).toBe(false)
-    expect(TUI_AGENT_CONFIG.deepseek.launchCmd).toBe('deepseek --skip-onboarding')
+    expect(TUI_AGENT_CONFIG.deepseek.launchCmd).toBe(
+      'deepseek run --yolo --skip-onboarding --fresh'
+    )
   })
 
   it('treats DeepSeek Draft chrome as unsent composer text', () => {
