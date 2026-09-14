@@ -14,7 +14,7 @@ import { createExistingWorktreeWorkerTerminal } from './worker-topology'
 describe('orchestration worker launch preferences', () => {
   it.each([
     ['grok', 'grok-4.6', 'high'],
-    ['antigravity', 'Gemini 3.8 Flash', undefined]
+    ['antigravity', 'gemini-3.8-flash-high', undefined]
   ] as const)('returns a structured launch receipt for %s', (agent, model, effort) => {
     expect(resolveWorkerLaunchPreferences({ agent, model, effort })).toMatchObject({
       preferences: { model, ...(effort ? { effort } : {}) },

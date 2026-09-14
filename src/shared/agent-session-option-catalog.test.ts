@@ -175,12 +175,18 @@ describe('agent session option catalog', () => {
     expect(catalog.supportsWorkerLaunchPreferences).toBe(true)
     expect(catalog.models).toEqual([])
     expect(catalog.listModels!.command).toBe('agy models')
+    const parsed = catalog.listModels!.parse(
+      'gemini-3.8-flash-high\tGemini 3.8 Flash (High)\ngemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)\n'
+    )
+    expect(parsed.map(({ id, label }) => ({ id, label }))).toEqual([
+      { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
+      { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' }
+    ])
     expect(
-      catalog.listModels!.parse('Gemini 3.8 Flash\nGemini 3.8 Pro (High)\n').map(({ id }) => id)
-    ).toEqual(['Gemini 3.8 Flash', 'Gemini 3.8 Pro (High)'])
-    expect(resolveAgentSessionOptionLaunch('antigravity', { model: 'Gemini 3.8 Flash' })).toEqual({
-      args: ['--model', 'Gemini 3.8 Flash'],
-      appliedValues: { model: 'Gemini 3.8 Flash' }
+      resolveAgentSessionOptionLaunch('antigravity', { model: 'gemini-3.8-flash-high' })
+    ).toEqual({
+      args: ['--model', 'gemini-3.8-flash-high'],
+      appliedValues: { model: 'gemini-3.8-flash-high' }
     })
   })
 
