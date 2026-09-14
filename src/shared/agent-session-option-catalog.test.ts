@@ -170,6 +170,20 @@ describe('agent session option catalog', () => {
     expect(Object.keys(codex).sort()).toEqual(['id', 'label', 'options'])
   })
 
+  it('discovers Antigravity models live and forwards an explicit worker model', () => {
+    const catalog = getAgentSessionOptionCatalog('antigravity')!
+    expect(catalog.supportsWorkerLaunchPreferences).toBe(true)
+    expect(catalog.models).toEqual([])
+    expect(catalog.listModels!.command).toBe('agy models')
+    expect(
+      catalog.listModels!.parse('Gemini 3.8 Flash\nGemini 3.8 Pro (High)\n').map(({ id }) => id)
+    ).toEqual(['Gemini 3.8 Flash', 'Gemini 3.8 Pro (High)'])
+    expect(resolveAgentSessionOptionLaunch('antigravity', { model: 'Gemini 3.8 Flash' })).toEqual({
+      args: ['--model', 'Gemini 3.8 Flash'],
+      appliedValues: { model: 'Gemini 3.8 Flash' }
+    })
+  })
+
   it('passes unknown model and option values through launch mappings', () => {
     expect(
       resolveAgentSessionOptionLaunch('claude', {

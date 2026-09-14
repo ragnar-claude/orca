@@ -8,6 +8,61 @@ import { TERMINAL_HANDLERS } from './terminal'
 
 const ORIGINAL_EXIT_CODE = process.exitCode
 
+describe('terminal quick-command list CLI', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('enumerates the exact live quick-command inventory as JSON', async () => {
+    const call = vi.fn().mockResolvedValue({
+      id: 'req-quick-commands',
+      ok: true,
+      result: {
+        terminalQuickCommands: [
+          {
+            id: 'deploy-check',
+            label: 'Deploy check',
+            command: 'pnpm test',
+            appendEnter: true,
+            scope: { type: 'global' }
+          }
+        ]
+      },
+      _meta: { runtimeId: 'runtime-1' }
+    })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await TERMINAL_HANDLERS['terminal quick-command list']({
+      flags: new Map(),
+      client: { call } as unknown as RuntimeClient,
+      cwd: '/tmp/worktree',
+      json: true
+    })
+
+    expect(call).toHaveBeenCalledWith('settings.getTerminalQuickCommands', undefined)
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
+      result: { terminalQuickCommands: [{ id: 'deploy-check', command: 'pnpm test' }] }
+    })
+  })
+
+  it('prints a bounded empty-inventory result', async () => {
+    const call = vi.fn().mockResolvedValue({
+      id: 'req-quick-commands',
+      ok: true,
+      result: { terminalQuickCommands: [] },
+      _meta: { runtimeId: 'runtime-1' }
+    })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await TERMINAL_HANDLERS['terminal quick-command list']({
+      flags: new Map(),
+      client: { call } as unknown as RuntimeClient,
+      cwd: '/tmp/worktree',
+      json: false
+    })
+
+    expect(log).toHaveBeenCalledWith('No terminal quick commands configured.')
+  })
+})
+
 describe('terminal close CLI', () => {
   afterEach(() => {
     vi.restoreAllMocks()

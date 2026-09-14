@@ -19,6 +19,7 @@ import {
   planCheckpointNotification,
   planMailboxPreflight,
   replacementLaunchCommand,
+  selectCoordinatorReplacement,
   tokenTrigger,
   verifyFreshTakeover,
   workersPreserved
@@ -51,6 +52,42 @@ describe('serving promotion contract', () => {
     expect(SERVING_PROMOTION_CONTRACT.close_precedes_archive).toBe(true)
     expect(WORKTREE).toContain('/root')
     expect(replacementLaunchCommand('explicit-model')[0]).toBe('codex')
+  })
+})
+
+describe('quota-aware replacement selection', () => {
+  it('avoids exhausted Kimi and selects the next live capable provider', () => {
+    expect(
+      selectCoordinatorReplacement([
+        {
+          agent: 'kimi',
+          model: 'k3',
+          available: true,
+          coordinatorCapable: true,
+          quotaStatus: 'exhausted'
+        },
+        {
+          agent: 'codex',
+          model: 'gpt-5.6',
+          available: true,
+          coordinatorCapable: true
+        }
+      ])
+    ).toMatchObject({ agent: 'codex', model: 'gpt-5.6' })
+  })
+
+  it('fails closed when Kimi quota is unknown and no alternative is admissible', () => {
+    expect(() =>
+      selectCoordinatorReplacement([
+        {
+          agent: 'kimi',
+          model: 'k3',
+          available: true,
+          coordinatorCapable: true,
+          quotaStatus: 'unknown'
+        }
+      ])
+    ).toThrow(/no live coordinator-capable provider/)
   })
 })
 

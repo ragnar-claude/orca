@@ -8,6 +8,7 @@ import type {
   RuntimeTerminalSplit,
   RuntimeTerminalWait
 } from '../../shared/runtime-types'
+import type { TerminalQuickCommand } from '../../shared/terminal-quick-command-types'
 import type { CommandHandler } from '../dispatch'
 import { shouldUseRendererBackedInteractiveTerminal } from '../codex-command-classification'
 import {
@@ -72,6 +73,24 @@ export const TERMINAL_HANDLERS: Record<string, CommandHandler> = {
       terminal: await getTerminalHandle(flags, cwd, client)
     })
     printResult(result, json, formatTerminalShow)
+  },
+  'terminal quick-command list': async ({ client, json }) => {
+    const result = await client.call<{ terminalQuickCommands: TerminalQuickCommand[] }>(
+      'settings.getTerminalQuickCommands',
+      undefined
+    )
+    printResult(result, json, ({ terminalQuickCommands }) =>
+      terminalQuickCommands.length === 0
+        ? 'No terminal quick commands configured.'
+        : terminalQuickCommands
+            .map((command) => {
+              const scope =
+                command.scope?.type === 'repo' ? `repo:${command.scope.repoId}` : 'global'
+              const action = command.action ?? 'terminal-command'
+              return `${command.id}\t${action}\t${scope}\t${command.label}`
+            })
+            .join('\n')
+    )
   },
   'terminal read': async ({ flags, client, cwd, json }) => {
     const cursorFlag = getOptionalStringFlag(flags, 'cursor')

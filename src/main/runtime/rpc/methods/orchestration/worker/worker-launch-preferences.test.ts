@@ -12,6 +12,19 @@ import { WorkerStartParams } from './worker-start-schema'
 import { createExistingWorktreeWorkerTerminal } from './worker-topology'
 
 describe('orchestration worker launch preferences', () => {
+  it.each([
+    ['grok', 'grok-4.6', 'high'],
+    ['antigravity', 'Gemini 3.8 Flash', undefined]
+  ] as const)('returns a structured launch receipt for %s', (agent, model, effort) => {
+    expect(resolveWorkerLaunchPreferences({ agent, model, effort })).toMatchObject({
+      preferences: { model, ...(effort ? { effort } : {}) },
+      receipt: {
+        requested: { agent, model, effort: effort ?? null },
+        effective: { agent, model, effort: effort ?? null }
+      }
+    })
+  })
+
   it('passes an opaque Claude model and portable effort through the shared catalog', () => {
     expect(
       resolveWorkerLaunchPreferences({
@@ -185,7 +198,7 @@ describe('orchestration worker launch preferences', () => {
 
   it('rejects model selection for agents without a launch catalog', () => {
     expect(() =>
-      resolveWorkerLaunchPreferences({ agent: 'grok', model: 'grok-code-fast-1' })
+      resolveWorkerLaunchPreferences({ agent: 'aider', model: 'provider/model' })
     ).toThrow('does not support launch-time model selection')
   })
 

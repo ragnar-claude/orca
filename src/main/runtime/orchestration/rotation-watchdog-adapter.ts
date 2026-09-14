@@ -177,6 +177,31 @@ export function replacementLaunchCommand(model: string, effort = 'medium'): read
   ]
 }
 
+export type CoordinatorReplacementCandidate = {
+  agent: string
+  model: string
+  available: boolean
+  coordinatorCapable: boolean
+  quotaStatus?: 'available' | 'exhausted' | 'unknown'
+}
+
+/** Selects from live capability/quota observations. Kimi is fail-closed on unknown quota so
+ * an exhausted or unobservable allowance cannot strand the automatic handoff after checkpoint. */
+export function selectCoordinatorReplacement(
+  candidates: readonly CoordinatorReplacementCandidate[]
+): CoordinatorReplacementCandidate {
+  const selected = candidates.find(
+    (candidate) =>
+      candidate.available &&
+      candidate.coordinatorCapable &&
+      (candidate.agent !== 'kimi' || candidate.quotaStatus === 'available')
+  )
+  if (!selected) {
+    throw new Error('no live coordinator-capable provider with admissible quota')
+  }
+  return { ...selected }
+}
+
 export function verifyFreshTakeover(args: {
   runId: string
   expectedRunId: string
