@@ -192,7 +192,36 @@ describe('provider-neutral rotation telemetry', () => {
       telemetrySource: 'claude_context_remaining_footer',
       contextRemainingPercent: 19
     })
-    expect(CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT).toBe(20)
+    expect(CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT).toBe(50)
+  })
+
+  it('rotates at exactly 50 percent remaining but not immediately above it', () => {
+    expect(
+      evaluateRotationTelemetry({
+        contextRemainingPercent: CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT,
+        telemetryStatus: 'available',
+        telemetrySource: 'boundary_fixture'
+      })
+    ).toMatchObject({
+      shouldRotate: true,
+      triggeredReasons: ['context_pressure'],
+      observations: { contextPressure: true }
+    })
+    expect(
+      evaluateRotationTelemetry({
+        contextRemainingPercent: CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT + 0.01,
+        telemetryStatus: 'available',
+        telemetrySource: 'boundary_fixture'
+      })
+    ).toMatchObject({
+      shouldRotate: false,
+      triggeredReasons: [],
+      observations: {
+        tokenThreshold: false,
+        contextPressure: false,
+        telemetryUnavailable: false
+      }
+    })
   })
 
   it('fails closed without manufacturing a false zero', () => {
