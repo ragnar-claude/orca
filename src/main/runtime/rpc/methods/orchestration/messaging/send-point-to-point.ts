@@ -130,11 +130,23 @@ export function sendPointToPointMessage(args: {
         )
       }
       if (msg.type === 'worker_done' && reconciled.action === 'completed') {
-        const requested = db.requestWorkerTerminalRelease(reconciled.dispatchId)
-        if (requested.disposition === 'requested') {
-          automaticRelease = {
-            dispatchId: reconciled.dispatchId,
-            resource: requested.resource
+        // Federated release must remain behind its durable retry request and pinned-host guards.
+        // A release-request failure is cleanup-only and must never unwind accepted settlement.
+        if (!db.getFederatedDispatch(reconciled.dispatchId)) {
+          try {
+            const requested = db.requestWorkerTerminalRelease(reconciled.dispatchId)
+            if (requested.disposition === 'requested') {
+              automaticRelease = {
+                dispatchId: reconciled.dispatchId,
+                resource: requested.resource
+              }
+            }
+          } catch (error) {
+            console.warn(
+              '[orchestration] automatic worker release request failed',
+              reconciled.dispatchId,
+              error
+            )
           }
         }
       }
