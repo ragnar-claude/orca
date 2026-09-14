@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { reconcileRequestedWorkerTerminalReleases } from '../../../../orchestration/worker-terminal-release-reconciliation'
 import { createOrchestrationWorkerReleaseHarness } from './worker-release.test-support'
 
 function codexMessage(id: string, text: string): string {
@@ -57,6 +58,133 @@ describe('orchestration worker release archive', () => {
       h.call('orchestration.workerRelease', { dispatch: dispatchId })
     ).resolves.toMatchObject({ state: 'already_released', processAction: 'none' })
     expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an accepted worker_done completed exactly once when automatic release request throws', async () => {
+    h.setup()
+    const { taskId, dispatchId } = await h.startWorker()
+    const dispatchCapability = h.db.mintDispatchCapability({
+      dispatchId,
+      paneKey: h.workerPaneKey,
+      processIncarnation: 'runtime_test:term_worker:1'
+    })
+    const requestRelease = vi
+      .spyOn(h.db, 'requestWorkerTerminalRelease')
+      .mockImplementationOnce(() => {
+        throw new Error('release request exploded')
+      })
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const params = {
+      from: 'term_worker',
+      to: 'term_coord',
+      subject: 'Done despite cleanup failure',
+      type: 'worker_done' as const,
+      payload: JSON.stringify({ taskId, dispatchId, outcome: 'succeeded' })
+    }
+
+    await expect(
+      h.call('orchestration.send', params, { orchestrationCapability: dispatchCapability })
+    ).resolves.toMatchObject({ lifecycle: { action: 'completed' } })
+    expect(h.db.getTask(taskId)?.status).toBe('completed')
+    expect(h.db.getDispatchContextById(dispatchId)?.status).toBe('completed')
+    expect(h.db.getWorkerDispatch(dispatchId)?.state).toBe('succeeded')
+    expect(requestRelease).toHaveBeenCalledTimes(1)
+
+    await expect(
+      h.call('orchestration.send', params, { orchestrationCapability: dispatchCapability })
+    ).resolves.toMatchObject({
+      lifecycle: { action: 'rejected', code: 'dispatch_capability_invalid' }
+    })
+    expect(requestRelease).toHaveBeenCalledTimes(1)
+    expect(h.db.getTask(taskId)?.status).toBe('completed')
+    expect(h.db.getDispatchContextById(dispatchId)?.status).toBe('completed')
+    expect(h.db.getWorkerDispatch(dispatchId)?.state).toBe('succeeded')
+    expect(h.runtime.closeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('leaves federated completion behind the durable worker-release request guard', async () => {
+    h.setup()
+    const { taskId, dispatchId } = await h.startWorker()
+    const dispatchCapability = h.db.mintDispatchCapability({
+      dispatchId,
+      paneKey: h.workerPaneKey,
+      processIncarnation: 'runtime_test:term_worker:1'
+    })
+    vi.spyOn(h.db, 'getFederatedDispatch').mockReturnValue({ dispatch_id: dispatchId } as never)
+    const requestRelease = vi.spyOn(h.db, 'requestWorkerTerminalRelease')
+
+    await expect(
+      h.call(
+        'orchestration.send',
+        {
+          from: 'term_worker',
+          to: 'term_coord',
+          subject: 'Federated done',
+          type: 'worker_done',
+          payload: JSON.stringify({ taskId, dispatchId, outcome: 'succeeded' })
+        },
+        { orchestrationCapability: dispatchCapability }
+      )
+    ).resolves.toMatchObject({ lifecycle: { action: 'completed' } })
+    expect(requestRelease).not.toHaveBeenCalled()
+    await expect(h.call('orchestration.workerRelease', { dispatch: dispatchId })).rejects.toThrow(
+      'Remote worker-release requires a durable retry request.'
+    )
+    expect(h.runtime.closeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('reconciles a durable releasing row after automatic post-commit close failure', async () => {
+    h.setup()
+    const { taskId, dispatchId } = await h.startWorker()
+    const dispatchCapability = h.db.mintDispatchCapability({
+      dispatchId,
+      paneKey: h.workerPaneKey,
+      processIncarnation: 'runtime_test:term_worker:1'
+    })
+    vi.mocked(h.runtime.closeTerminal).mockRejectedValueOnce(
+      new Error('Remote terminal stream is not connected')
+    )
+
+    await expect(
+      h.call(
+        'orchestration.send',
+        {
+          from: 'term_worker',
+          to: 'term_coord',
+          subject: 'Done before restart recovery',
+          type: 'worker_done',
+          payload: JSON.stringify({ taskId, dispatchId, outcome: 'succeeded' })
+        },
+        { orchestrationCapability: dispatchCapability }
+      )
+    ).resolves.toMatchObject({ lifecycle: { action: 'completed' } })
+    await vi.waitFor(() => {
+      expect(h.db.getWorkerTerminalResourceByOwner(dispatchId)).toMatchObject({
+        ownership_state: 'owned',
+        release_state: 'releasing',
+        archive_source: 'terminal',
+        archive_status: 'captured'
+      })
+      expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(1)
+    })
+    vi.mocked(h.runtime.closeTerminal).mockImplementationOnce(async () => {
+      expect(h.db.getWorkerTerminalArchive(dispatchId)).toBeDefined()
+      expect(h.db.getWorkerTerminalResourceByOwner(dispatchId)?.release_state).toBe('releasing')
+      return { handle: 'term_worker', tabId: 'tab-worker', ptyKilled: true } as never
+    })
+
+    await expect(reconcileRequestedWorkerTerminalReleases(h.runtime)).resolves.toMatchObject({
+      attempted: 1,
+      released: 1,
+      pending: 0
+    })
+    expect(h.db.getWorkerTerminalResourceByOwner(dispatchId)).toMatchObject({
+      ownership_state: 'released',
+      release_state: 'released',
+      archive_source: 'terminal',
+      archive_status: 'captured'
+    })
+    expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(2)
   })
 
   it('records an explicitly empty archive for an already-exited worker process', async () => {
