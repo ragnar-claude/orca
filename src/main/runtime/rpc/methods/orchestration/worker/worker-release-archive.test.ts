@@ -17,6 +17,48 @@ describe('orchestration worker release archive', () => {
 
   afterEach(() => h.cleanup())
 
+  it('automatically archives and releases the exact terminal after successful worker_done', async () => {
+    h.setup()
+    const { taskId, dispatchId } = await h.startWorker()
+    const dispatchCapability = h.db.mintDispatchCapability({
+      dispatchId,
+      paneKey: h.workerPaneKey,
+      processIncarnation: 'runtime_test:term_worker:1'
+    })
+
+    const completion = (await h.call(
+      'orchestration.send',
+      {
+        from: 'term_worker',
+        to: 'term_coord',
+        subject: 'Done',
+        type: 'worker_done',
+        payload: JSON.stringify({ taskId, dispatchId, outcome: 'succeeded' })
+      },
+      { orchestrationCapability: dispatchCapability }
+    )) as { lifecycle: { action: string } }
+
+    expect(completion.lifecycle.action).toBe('completed')
+    expect(h.db.getTask(taskId)?.status).toBe('completed')
+    expect(h.db.getDispatchContextById(dispatchId)?.status).toBe('completed')
+    expect(h.db.getWorkerDispatch(dispatchId)?.state).toBe('succeeded')
+    await vi.waitFor(() => {
+      expect(h.db.getWorkerTerminalResourceByOwner(dispatchId)).toMatchObject({
+        ownership_state: 'released',
+        release_state: 'released',
+        archive_source: 'terminal',
+        archive_status: 'captured'
+      })
+    })
+    expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(1)
+    expect(h.runtime.closeTerminal).toHaveBeenCalledWith('term_worker')
+
+    await expect(
+      h.call('orchestration.workerRelease', { dispatch: dispatchId })
+    ).resolves.toMatchObject({ state: 'already_released', processAction: 'none' })
+    expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(1)
+  })
+
   it('records an explicitly empty archive for an already-exited worker process', async () => {
     h.setup()
     const { dispatchId } = await h.startSettledWorker()

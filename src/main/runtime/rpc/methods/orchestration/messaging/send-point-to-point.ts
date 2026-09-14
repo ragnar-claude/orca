@@ -1,4 +1,5 @@
 import type { MessagePriority, MessageType, OrchestrationDb } from '../../../../orchestration/db'
+import type { WorkerTerminalResourceRow } from '../../../../orchestration/worker-terminal-ownership'
 import type { OrcaRuntimeService } from '../../../../orca-runtime'
 import { reconcileLifecycleMessage } from '../../../../orchestration/lifecycle-reconciliation'
 import { bindCoordinatorMutationPayload } from '../../../../orchestration/dispatch-message-binding'
@@ -7,6 +8,7 @@ import type { SendParams } from '../schemas'
 import { legacyWorkerDeliveryContract } from '../routing'
 import { exposeMessage } from './mailbox-message-receipt'
 import { recordReceiptForPostCommitNudge } from './mutation-replay-nudge'
+import { completeWorkerTerminalRelease } from '../worker/worker-release-completion'
 import type { SendRecipientWarning } from './recipient-routing'
 import type { z } from 'zod'
 
@@ -53,6 +55,7 @@ export function sendPointToPointMessage(args: {
   const processIncarnation = isDispatchMutationMessageType(messageType)
     ? resolveProcessIncarnation()
     : undefined
+  let automaticRelease: { dispatchId: string; resource: WorkerTerminalResourceRow } | undefined
   const commitMessage = (): { receipt: unknown; nudge: () => void } => {
     const dispatch = dispatchId ? db.getDispatchContextById(dispatchId) : undefined
     const msg = db.insertMessage({
@@ -126,6 +129,15 @@ export function sendPointToPointMessage(args: {
           runtime.notifyMessageArrived(rejection.to_handle, rejection.type)
         )
       }
+      if (msg.type === 'worker_done' && reconciled.action === 'completed') {
+        const requested = db.requestWorkerTerminalRelease(reconciled.dispatchId)
+        if (requested.disposition === 'requested') {
+          automaticRelease = {
+            dispatchId: reconciled.dispatchId,
+            resource: requested.resource
+          }
+        }
+      }
       const receipt = withSendWarnings(
         msg.type === 'worker_done'
           ? { message: exposeMessage(msg), lifecycle: reconciled }
@@ -149,6 +161,12 @@ export function sendPointToPointMessage(args: {
       ? db.commitWorkerDoneMessageMutation(commitMessage)
       : commitMessage()
   committed.nudge()
+  if (automaticRelease) {
+    const { dispatchId, resource } = automaticRelease
+    void completeWorkerTerminalRelease({ runtime, db, dispatchId, resource }).catch((error) => {
+      console.warn('[orchestration] automatic worker release failed', dispatchId, error)
+    })
+  }
   return committed.receipt
 }
 
