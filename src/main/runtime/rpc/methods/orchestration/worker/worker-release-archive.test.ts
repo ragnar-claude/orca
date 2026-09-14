@@ -60,7 +60,47 @@ describe('orchestration worker release archive', () => {
     expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps an accepted worker_done completed exactly once when automatic release request throws', async () => {
+  it('keeps accepted worker_done completed when the federated ownership lookup throws', async () => {
+    h.setup()
+    const { taskId, dispatchId } = await h.startWorker()
+    const dispatchCapability = h.db.mintDispatchCapability({
+      dispatchId,
+      paneKey: h.workerPaneKey,
+      processIncarnation: 'runtime_test:term_worker:1'
+    })
+    const getFederatedDispatch = vi
+      .spyOn(h.db, 'getFederatedDispatch')
+      .mockImplementationOnce(() => {
+        throw new Error('federated lookup exploded')
+      })
+    const requestRelease = vi.spyOn(h.db, 'requestWorkerTerminalRelease')
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(
+      h.call(
+        'orchestration.send',
+        {
+          from: 'term_worker',
+          to: 'term_coord',
+          subject: 'Done despite ownership lookup failure',
+          type: 'worker_done',
+          payload: JSON.stringify({ taskId, dispatchId, outcome: 'succeeded' })
+        },
+        { orchestrationCapability: dispatchCapability }
+      )
+    ).resolves.toMatchObject({ lifecycle: { action: 'completed' } })
+    expect(h.db.getTask(taskId)?.status).toBe('completed')
+    expect(h.db.getDispatchContextById(dispatchId)?.status).toBe('completed')
+    expect(h.db.getWorkerDispatch(dispatchId)?.state).toBe('succeeded')
+    expect(getFederatedDispatch).toHaveBeenCalledTimes(2)
+    expect(requestRelease).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(h.db.getWorkerTerminalResourceByOwner(dispatchId)?.release_state).toBe('released')
+    })
+    expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('records durable retry intent when the automatic release request initially throws', async () => {
     h.setup()
     const { taskId, dispatchId } = await h.startWorker()
     const dispatchCapability = h.db.mintDispatchCapability({
@@ -74,6 +114,8 @@ describe('orchestration worker release archive', () => {
         throw new Error('release request exploded')
       })
     vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const close = h.deferred<never>()
+    vi.mocked(h.runtime.closeTerminal).mockImplementationOnce(() => close.promise)
     const params = {
       from: 'term_worker',
       to: 'term_coord',
@@ -88,18 +130,31 @@ describe('orchestration worker release archive', () => {
     expect(h.db.getTask(taskId)?.status).toBe('completed')
     expect(h.db.getDispatchContextById(dispatchId)?.status).toBe('completed')
     expect(h.db.getWorkerDispatch(dispatchId)?.state).toBe('succeeded')
-    expect(requestRelease).toHaveBeenCalledTimes(1)
+    expect(requestRelease).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => {
+      expect(h.db.getWorkerTerminalResourceByOwner(dispatchId)).toMatchObject({
+        ownership_state: 'owned',
+        release_state: 'releasing',
+        archive_source: 'terminal',
+        archive_status: 'captured'
+      })
+    })
+    expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(1)
+    close.resolve({ handle: 'term_worker', tabId: 'tab-worker', ptyKilled: true } as never)
+    await vi.waitFor(() => {
+      expect(h.db.getWorkerTerminalResourceByOwner(dispatchId)?.release_state).toBe('released')
+    })
 
     await expect(
       h.call('orchestration.send', params, { orchestrationCapability: dispatchCapability })
     ).resolves.toMatchObject({
       lifecycle: { action: 'rejected', code: 'dispatch_capability_invalid' }
     })
-    expect(requestRelease).toHaveBeenCalledTimes(1)
+    expect(requestRelease).toHaveBeenCalledTimes(2)
     expect(h.db.getTask(taskId)?.status).toBe('completed')
     expect(h.db.getDispatchContextById(dispatchId)?.status).toBe('completed')
     expect(h.db.getWorkerDispatch(dispatchId)?.state).toBe('succeeded')
-    expect(h.runtime.closeTerminal).not.toHaveBeenCalled()
+    expect(h.runtime.closeTerminal).toHaveBeenCalledTimes(1)
   })
 
   it('leaves federated completion behind the durable worker-release request guard', async () => {

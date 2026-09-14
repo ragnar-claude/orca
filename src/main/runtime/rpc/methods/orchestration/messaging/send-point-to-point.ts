@@ -56,6 +56,17 @@ export function sendPointToPointMessage(args: {
     ? resolveProcessIncarnation()
     : undefined
   let automaticRelease: { dispatchId: string; resource: WorkerTerminalResourceRow } | undefined
+  let automaticReleaseRetryDispatchId: string | undefined
+  const requestAutomaticWorkerTerminalRelease = (completedDispatchId: string): void => {
+    // Federated release remains exclusively owned by the durable-request and pinned-host path.
+    if (db.getFederatedDispatch(completedDispatchId)) {
+      return
+    }
+    const requested = db.requestWorkerTerminalRelease(completedDispatchId)
+    if (requested.disposition === 'requested') {
+      automaticRelease = { dispatchId: completedDispatchId, resource: requested.resource }
+    }
+  }
   const commitMessage = (): { receipt: unknown; nudge: () => void } => {
     const dispatch = dispatchId ? db.getDispatchContextById(dispatchId) : undefined
     const msg = db.insertMessage({
@@ -130,24 +141,17 @@ export function sendPointToPointMessage(args: {
         )
       }
       if (msg.type === 'worker_done' && reconciled.action === 'completed') {
-        // Federated release must remain behind its durable retry request and pinned-host guards.
-        // A release-request failure is cleanup-only and must never unwind accepted settlement.
-        if (!db.getFederatedDispatch(reconciled.dispatchId)) {
-          try {
-            const requested = db.requestWorkerTerminalRelease(reconciled.dispatchId)
-            if (requested.disposition === 'requested') {
-              automaticRelease = {
-                dispatchId: reconciled.dispatchId,
-                resource: requested.resource
-              }
-            }
-          } catch (error) {
-            console.warn(
-              '[orchestration] automatic worker release request failed',
-              reconciled.dispatchId,
-              error
-            )
-          }
+        // A lookup or request failure is cleanup-only: commit accepted settlement, then retry the
+        // same guarded request outside the savepoint so successful intent is independently durable.
+        try {
+          requestAutomaticWorkerTerminalRelease(reconciled.dispatchId)
+        } catch (error) {
+          automaticReleaseRetryDispatchId = reconciled.dispatchId
+          console.warn(
+            '[orchestration] automatic worker release request deferred until after settlement',
+            reconciled.dispatchId,
+            error
+          )
         }
       }
       const receipt = withSendWarnings(
@@ -173,6 +177,17 @@ export function sendPointToPointMessage(args: {
       ? db.commitWorkerDoneMessageMutation(commitMessage)
       : commitMessage()
   committed.nudge()
+  if (automaticReleaseRetryDispatchId) {
+    try {
+      requestAutomaticWorkerTerminalRelease(automaticReleaseRetryDispatchId)
+    } catch (error) {
+      console.warn(
+        '[orchestration] automatic worker release request retry failed',
+        automaticReleaseRetryDispatchId,
+        error
+      )
+    }
+  }
   if (automaticRelease) {
     const { dispatchId, resource } = automaticRelease
     void completeWorkerTerminalRelease({ runtime, db, dispatchId, resource }).catch((error) => {
