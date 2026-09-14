@@ -3,11 +3,11 @@ import {
   EXACT_ORCA_PATH,
   CHECKPOINT_TASK_STATUSES,
   CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT,
+  CONTEXT_USED_ROTATION_THRESHOLD_PERCENT,
   LOCAL_MODEL_INPUT_BUDGET_TOKENS,
   MODULE_ROOT,
   SERVING_PROMOTION_CONTRACT,
   SERVING_PROMOTION_HOOK,
-  TOKEN_ROTATION_THRESHOLD,
   WORKTREE,
   assertSoleSourceOwner,
   admitPrelaunchContext,
@@ -131,8 +131,6 @@ describe('handoff, archive, overlap, workers', () => {
     })
     expect(note.type).toBe('handoff')
     expect(note.planned).toBe(true)
-    expect(tokenTrigger(TOKEN_ROTATION_THRESHOLD)).toBe(true)
-    expect(tokenTrigger(TOKEN_ROTATION_THRESHOLD - 1)).toBe(false)
   })
 
   it('closes then archives and refuses archive-first', () => {
@@ -193,6 +191,64 @@ describe('provider-neutral rotation telemetry', () => {
       contextRemainingPercent: 19
     })
     expect(CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT).toBe(50)
+    expect(CONTEXT_USED_ROTATION_THRESHOLD_PERCENT).toBe(50)
+  })
+
+  it('does not rotate at 120000 used tokens in a 500K window', () => {
+    expect(tokenTrigger(120_000, 500_000)).toBe(false)
+    expect(
+      evaluateRotationTelemetry({
+        newInputTokens: 120_000,
+        contextWindowTokens: 500_000,
+        telemetryStatus: 'available',
+        telemetrySource: '500k_fixture'
+      })
+    ).toMatchObject({
+      shouldRotate: false,
+      triggeredReasons: [],
+      observations: { contextPressure: false, telemetryUnavailable: false }
+    })
+  })
+
+  it('rotates at exactly 50 percent used and stays quiet immediately below', () => {
+    expect(tokenTrigger(250_000, 500_000)).toBe(true)
+    expect(tokenTrigger(249_999, 500_000)).toBe(false)
+    expect(
+      evaluateRotationTelemetry({
+        newInputTokens: 250_000,
+        contextWindowTokens: 500_000,
+        telemetryStatus: 'available',
+        telemetrySource: '500k_boundary_fixture'
+      })
+    ).toMatchObject({
+      shouldRotate: true,
+      triggeredReasons: ['context_pressure']
+    })
+  })
+
+  it('preserves telemetry, connection, compaction, refusal, and stall emergencies', () => {
+    const baseline = {
+      newInputTokens: 120_000,
+      contextWindowTokens: 500_000,
+      telemetryStatus: 'available' as const,
+      telemetrySource: 'emergency_fixture'
+    }
+    const cases = {
+      telemetry_unavailable: {
+        telemetryStatus: 'unavailable' as const,
+        telemetrySource: 'terminal_footer'
+      },
+      disconnect: { ...baseline, connectionLost: true },
+      post_compaction: { ...baseline, postCompaction: true },
+      refusal: { ...baseline, refusal: true },
+      stall: { ...baseline, stall: true }
+    }
+    for (const [reason, metrics] of Object.entries(cases)) {
+      expect(evaluateRotationTelemetry(metrics), reason).toMatchObject({
+        shouldRotate: true,
+        triggeredReasons: [reason]
+      })
+    }
   })
 
   it('rotates at exactly 50 percent remaining but not immediately above it', () => {
@@ -217,7 +273,6 @@ describe('provider-neutral rotation telemetry', () => {
       shouldRotate: false,
       triggeredReasons: [],
       observations: {
-        tokenThreshold: false,
         contextPressure: false,
         telemetryUnavailable: false
       }
@@ -241,7 +296,7 @@ describe('provider-neutral rotation telemetry', () => {
     ).toMatchObject({
       shouldRotate: true,
       triggeredReasons: ['telemetry_unavailable'],
-      observations: { telemetryUnavailable: true, tokenThreshold: false }
+      observations: { telemetryUnavailable: true, contextPressure: false }
     })
   })
 

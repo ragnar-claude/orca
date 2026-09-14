@@ -3,7 +3,7 @@
  * Serving hook for /root/orca-control/rotation-watchdog.
  * Does not edit worker-lifecycle, resource-admission, or personality/SOUL files.
  */
-import { TOKEN_ROTATION_THRESHOLD } from './rotation-watchdog-snapshot'
+import { evaluateRotationTelemetry } from './rotation-watchdog-snapshot'
 
 export const EXACT_ORCA_PATH = '/root'
 export const MODULE_ROOT = '/root/orca-control/rotation-watchdog'
@@ -14,12 +14,12 @@ export const SCHEMA = 'livewell.orca.rotation-watchdog-adapter.v1'
 export {
   CHECKPOINT_TASK_STATUSES,
   CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT,
+  CONTEXT_USED_ROTATION_THRESHOLD_PERCENT,
   LOCAL_MODEL_CONTEXT_WINDOW_TOKENS,
   LOCAL_MODEL_FALLBACKS,
   LOCAL_MODEL_INPUT_BUDGET_TOKENS,
   LOCAL_MODEL_RESERVED_OUTPUT_TOKENS,
   LOCAL_MODEL_RESERVED_TOOL_TOKENS,
-  TOKEN_ROTATION_THRESHOLD,
   admitPrelaunchContext,
   enumerateCheckpointTasks,
   evaluateRotationTelemetry,
@@ -237,6 +237,11 @@ export function workersPreserved(
   return { ok: true }
 }
 
-export function tokenTrigger(newInputTokens: number): boolean {
-  return newInputTokens >= TOKEN_ROTATION_THRESHOLD
+export function tokenTrigger(usedTokens: number, contextWindowTokens: number): boolean {
+  return evaluateRotationTelemetry({
+    newInputTokens: usedTokens,
+    contextWindowTokens,
+    telemetryStatus: 'available',
+    telemetrySource: 'token_window'
+  }).shouldRotate
 }

@@ -1,4 +1,4 @@
-export const TOKEN_ROTATION_THRESHOLD = 120_000
+export const CONTEXT_USED_ROTATION_THRESHOLD_PERCENT = 50
 export const CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT = 50
 export const LOCAL_MODEL_CONTEXT_WINDOW_TOKENS = 65_536
 export const LOCAL_MODEL_RESERVED_OUTPUT_TOKENS = 8_192
@@ -63,40 +63,69 @@ export function parseContextTelemetry(footer?: string | null): ContextTelemetry 
 
 export type RotationTelemetryMetrics = {
   newInputTokens?: number | null
+  contextWindowTokens?: number | null
   contextRemainingPercent?: number | null
   telemetryStatus?: 'available' | 'unavailable' | null
   telemetrySource?: string | null
+  postCompaction?: boolean | null
+  disconnect?: boolean | null
+  connectionLost?: boolean | null
+  refusal?: boolean | null
+  stall?: boolean | null
 }
 
 export function evaluateRotationTelemetry(metrics: RotationTelemetryMetrics): {
   shouldRotate: boolean
   triggeredReasons: readonly string[]
   observations: {
-    tokenThreshold: boolean
     contextPressure: boolean
     telemetryUnavailable: boolean
+    postCompaction: boolean
+    disconnect: boolean
+    refusal: boolean
+    stall: boolean
   }
 } {
-  const tokenThreshold =
-    metrics.newInputTokens != null && metrics.newInputTokens >= TOKEN_ROTATION_THRESHOLD
-  const contextPressure =
-    metrics.contextRemainingPercent != null &&
-    metrics.contextRemainingPercent <= CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT
+  const hasTokenWindow =
+    metrics.newInputTokens != null &&
+    Number.isFinite(metrics.newInputTokens) &&
+    metrics.newInputTokens >= 0 &&
+    metrics.contextWindowTokens != null &&
+    Number.isFinite(metrics.contextWindowTokens) &&
+    metrics.contextWindowTokens > 0
+  const hasRemainingPercent =
+    metrics.contextRemainingPercent != null && Number.isFinite(metrics.contextRemainingPercent)
+  const usedPercent = hasTokenWindow
+    ? (100 * metrics.newInputTokens!) / metrics.contextWindowTokens!
+    : null
+  const contextPressure = hasRemainingPercent
+    ? metrics.contextRemainingPercent! <= CONTEXT_REMAINING_ROTATION_THRESHOLD_PERCENT
+    : usedPercent != null && usedPercent >= CONTEXT_USED_ROTATION_THRESHOLD_PERCENT
   const telemetryUnavailable =
-    metrics.telemetryStatus === 'unavailable' ||
-    (metrics.telemetryStatus == null &&
-      metrics.telemetrySource == null &&
-      (metrics.newInputTokens == null || metrics.newInputTokens === 0) &&
-      metrics.contextRemainingPercent == null)
+    metrics.telemetryStatus === 'unavailable' || (!hasRemainingPercent && !hasTokenWindow)
+  const postCompaction = Boolean(metrics.postCompaction)
+  const disconnect = Boolean(metrics.disconnect || metrics.connectionLost)
+  const refusal = Boolean(metrics.refusal)
+  const stall = Boolean(metrics.stall)
   const triggeredReasons = [
-    ...(tokenThreshold ? ['token_threshold'] : []),
     ...(contextPressure ? ['context_pressure'] : []),
-    ...(telemetryUnavailable ? ['telemetry_unavailable'] : [])
+    ...(telemetryUnavailable ? ['telemetry_unavailable'] : []),
+    ...(postCompaction ? ['post_compaction'] : []),
+    ...(disconnect ? ['disconnect'] : []),
+    ...(refusal ? ['refusal'] : []),
+    ...(stall ? ['stall'] : [])
   ]
   return {
     shouldRotate: triggeredReasons.length > 0,
     triggeredReasons,
-    observations: { tokenThreshold, contextPressure, telemetryUnavailable }
+    observations: {
+      contextPressure,
+      telemetryUnavailable,
+      postCompaction,
+      disconnect,
+      refusal,
+      stall
+    }
   }
 }
 
