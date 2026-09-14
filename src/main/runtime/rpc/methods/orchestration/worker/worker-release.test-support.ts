@@ -15,8 +15,15 @@ export function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => voi
 export type OrchestrationWorkerReleaseHarness = {
   setup: () => void
   cleanup: () => void
-  call: (name: string, params: Record<string, unknown>) => Promise<unknown>
-  startWorker: (options?: { terminal?: string }) => Promise<{ taskId: string; dispatchId: string }>
+  call: (
+    name: string,
+    params: Record<string, unknown>,
+    context?: Partial<RpcContext>
+  ) => Promise<unknown>
+  startWorker: (options?: { terminal?: string }) => Promise<{
+    taskId: string
+    dispatchId: string
+  }>
   settle: (taskId: string, dispatchId: string, outcome: 'succeeded' | 'failed') => void
   startSettledWorker: (
     outcome?: 'succeeded' | 'failed',
@@ -137,10 +144,14 @@ export function createOrchestrationWorkerReleaseHarness(): OrchestrationWorkerRe
     return method
   }
 
-  async function call(name: string, params: Record<string, unknown>) {
+  async function call(
+    name: string,
+    params: Record<string, unknown>,
+    context: Partial<RpcContext> = {}
+  ) {
     const method = findMethod(name)
     const parsed = method.params ? method.params.parse(params) : undefined
-    return method.handler(parsed, ctx)
+    return method.handler(parsed, { ...ctx, ...context })
   }
 
   async function startWorker(options: { terminal?: string } = {}): Promise<{

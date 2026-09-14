@@ -9,8 +9,11 @@ import type {
   WorkerTerminalRetainedReason
 } from '../../worker-terminal-ownership'
 import { OrchestrationError } from '../../orchestration-error'
+import { runLifecycleWriteTransaction } from '../lifecycle-write-transaction-runner'
 import { parseWorkerTerminalPriorOwnerIds } from '../pane-key-match'
 import type { OrchestrationDb } from '../orchestration-db'
+
+const WORKER_TERMINAL_RELEASE_REQUEST_SAVEPOINT = 'worker_terminal_release_request'
 
 export function requestWorkerTerminalRelease(
   this: OrchestrationDb,
@@ -23,8 +26,7 @@ export function requestWorkerTerminalRelease(
       resource: WorkerTerminalResourceRow | null
       reason: WorkerTerminalRetainedReason
     } {
-  this.db.exec('BEGIN IMMEDIATE')
-  try {
+  return runLifecycleWriteTransaction(this.db, WORKER_TERMINAL_RELEASE_REQUEST_SAVEPOINT, () => {
     const dispatch = this.getDispatchContextById(dispatchId)
     const worker = this.getWorkerDispatch(dispatchId)
     if (!dispatch) {
@@ -37,7 +39,6 @@ export function requestWorkerTerminalRelease(
           `Dispatch ${dispatchId} is ${dispatch.status}; only a settled dispatch can release.`
         )
       }
-      this.db.exec('COMMIT')
       return { disposition: 'retained', resource: null, reason: 'no_owned_resource' }
     }
     if (!WORKER_SETTLED_STATES.includes(worker.state)) {
@@ -51,22 +52,18 @@ export function requestWorkerTerminalRelease(
     const resource = this.getWorkerTerminalResourceByOwner(dispatchId)
     if (!resource) {
       const transferred = this.getWorkerTerminalResourceFormerlyOwnedBy(dispatchId)
-      this.db.exec('COMMIT')
       return transferred
         ? { disposition: 'retained', resource: transferred, reason: 'ownership_transferred' }
         : { disposition: 'retained', resource: null, reason: 'no_owned_resource' }
     }
     const decision = decideWorkerTerminalRelease(resource)
     if (decision.action === 'already_released') {
-      this.db.exec('COMMIT')
       return { disposition: 'already_released', resource }
     }
     if (worker.state === 'stopped' || worker.state === 'abandoned') {
-      this.db.exec('COMMIT')
       return { disposition: 'retained', resource, reason: 'identity_unproven' }
     }
     if (decision.action === 'retained') {
-      this.db.exec('COMMIT')
       return { disposition: 'retained', resource, reason: decision.reason }
     }
     if (resource.release_state === 'retained' && resource.retained_reason === 'user_requested') {
@@ -85,15 +82,11 @@ export function requestWorkerTerminalRelease(
          WHERE id = ? AND ${WORKER_TERMINAL_RELEASABLE_ROW_SQL}`
       )
       .run(resource.id)
-    this.db.exec('COMMIT')
     return {
       disposition: 'requested',
       resource: this.getWorkerTerminalResource(resource.id) as WorkerTerminalResourceRow
     }
-  } catch (error) {
-    this.db.exec('ROLLBACK')
-    throw error
-  }
+  })
 }
 
 export function settleDeadWorkerTerminalRelease(
