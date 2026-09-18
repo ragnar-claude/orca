@@ -1,29 +1,23 @@
 import { OrchestrationError } from '../../../../orchestration/orchestration-error'
-import type { TuiAgent } from '../../../../../../shared/tui-agent'
 import type { WorkerStartInput } from './worker-start-schema'
 import {
   LOCAL_LM_STUDIO_INPUT_BUDGET,
   LOCAL_LM_STUDIO_RESERVED_OUTPUT_TOKENS,
   LOCAL_LM_STUDIO_RESERVED_TOOL_TOKENS,
   isContextUnsafe,
-  localLmStudioPromptSplitPlan
-} from './local-lm-studio-context-budget'
-
-export {
-  LOCAL_LM_STUDIO_CONTEXT,
-  LOCAL_LM_STUDIO_INPUT_BUDGET,
-  LOCAL_LM_STUDIO_RESERVED_OUTPUT_TOKENS,
-  LOCAL_LM_STUDIO_RESERVED_TOOL_TOKENS,
-  LOCAL_LM_STUDIO_SAFE_CONTEXT,
-  estimateTokens,
-  isContextUnsafe,
   localLmStudioPromptSplitPlan,
   recordContextWindow
 } from './local-lm-studio-context-budget'
 
+export * from './local-lm-studio-context-budget'
+
 export const LOCAL_LM_STUDIO_ENDPOINT = 'http://127.0.0.1:1234'
 export const LOCAL_LM_STUDIO_INVENTORY_PATH = '/api/v0/models'
-export const LOCAL_LM_STUDIO_FALLBACKS = ['qwen/qwen3-coder-30b', 'qwen/qwen3-coder-next'] as const
+export const LOCAL_LM_STUDIO_FALLBACKS = [
+  'poolside/laguna-s-2.1',
+  'qwen/qwen3-coder-30b',
+  'qwen/qwen3-coder-next'
+] as const
 
 export type LocalLmStudioAdmissionStatus =
   | 'available'
@@ -34,28 +28,17 @@ export type LocalLmStudioAdmissionStatus =
   | 'model_absent'
   | 'context_unsafe'
 
-export type LocalLmStudioInventoryRecord = {
+export type LocalLmStudioInventoryRecord = LocalLmStudioContextRecord & {
   id: string
-  state?: 'loaded' | 'not-loaded' | string
-  loaded_context_length?: number
-  context_length?: number
-  max_model_len?: number
 }
 
-export type LocalLmStudioAdmission = {
+export type LocalLmStudioAdmission = ReturnType<typeof localLmStudioPromptSplitPlan> & {
   ok: boolean
   status: LocalLmStudioAdmissionStatus
   selectedModel: string | null
   fallbacks: readonly string[]
   inventoryFetches: number
   effectsApplied: false
-  contextWindowTokens: number
-  inputBudgetTokens: number
-  reservedToolTokens: number
-  reservedOutputTokens: number
-  estimatedInputTokens: number
-  splitRequired: boolean
-  requiredChunks: number
 }
 
 export type LocalLmStudioFetchImpl = (
@@ -72,7 +55,7 @@ export function normalizeLmStudioModelName(modelName: string): string {
 }
 
 export function shouldAdmitLocalLmStudio(args: {
-  agent?: TuiAgent | string | null
+  agent?: string | null
   model?: string | null
 }): boolean {
   const model = args.model ?? ''
@@ -175,14 +158,17 @@ export async function admitLocalLmStudio(args: {
     fetchStatus = fetched.status === 'available' ? 'available' : fetched.status
   }
 
-  const fail = (status: LocalLmStudioAdmissionStatus): LocalLmStudioAdmission => ({
+  const fail = (
+    status: LocalLmStudioAdmissionStatus,
+    contextWindow?: number
+  ): LocalLmStudioAdmission => ({
     ok: false,
     status,
     selectedModel: null,
     fallbacks,
     inventoryFetches,
     effectsApplied: false,
-    ...localLmStudioPromptSplitPlan(args.prompt, args.spec)
+    ...localLmStudioPromptSplitPlan(args.prompt, args.spec, contextWindow)
   })
 
   if (fetchStatus !== 'available') {
@@ -212,13 +198,18 @@ export async function admitLocalLmStudio(args: {
       lastStatus = 'model_absent'
       continue
     }
+    const window = recordContextWindow(record)
+    const plan = localLmStudioPromptSplitPlan(args.prompt, args.spec, window)
     if (isContextUnsafe(record, args.prompt, args.spec)) {
       lastStatus = 'context_unsafe'
       if (
         args.model &&
         normalizeLmStudioModelName(candidate) === normalizeLmStudioModelName(args.model)
       ) {
-        return fail('context_unsafe')
+        return {
+          ...fail('context_unsafe', window),
+          ...plan
+        }
       }
       continue
     }
@@ -231,14 +222,14 @@ export async function admitLocalLmStudio(args: {
       fallbacks,
       inventoryFetches,
       effectsApplied: false,
-      ...localLmStudioPromptSplitPlan(args.prompt, args.spec)
+      ...plan
     }
   }
   return fail(lastStatus)
 }
 
 export async function assertLocalLmStudioAdmission(args: {
-  agent?: TuiAgent | string | null
+  agent?: string | null
   model?: string | null
   prompt?: string
   spec?: string
@@ -275,17 +266,7 @@ export async function assertLocalLmStudioAdmission(args: {
     admission.status,
     `LM Studio admission refused worker-start (${admission.status}). No Dispatch, worktree, or terminal effects were applied.`,
     {
-      effectsApplied: false,
-      fallbacks: admission.fallbacks,
-      selectedModel: admission.selectedModel,
-      inventoryFetches: admission.inventoryFetches,
-      contextWindowTokens: admission.contextWindowTokens,
-      inputBudgetTokens: admission.inputBudgetTokens,
-      reservedToolTokens: admission.reservedToolTokens,
-      reservedOutputTokens: admission.reservedOutputTokens,
-      estimatedInputTokens: admission.estimatedInputTokens,
-      splitRequired: admission.splitRequired,
-      requiredChunks: admission.requiredChunks,
+      ...admission,
       nextSteps: [
         'Start LM Studio on 127.0.0.1:1234 with qwen/qwen3-coder-30b (then qwen/qwen3-coder-next).',
         'Load Qwen at exactly 65536 context tokens; 8192 is explicitly unsafe.',
@@ -297,7 +278,7 @@ export async function assertLocalLmStudioAdmission(args: {
 }
 
 export async function assertLocalWorkerStartLmStudioAdmission(args: {
-  agent?: TuiAgent | string | null
+  agent?: string | null
   params: WorkerStartInput
   existingSpec?: string
   fetchImpl?: LocalLmStudioFetchImpl

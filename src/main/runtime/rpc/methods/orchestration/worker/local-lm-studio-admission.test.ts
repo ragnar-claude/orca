@@ -117,9 +117,11 @@ describe('local LM Studio admission', () => {
       })
     ).resolves.toMatchObject({ ok: false, status: 'model_absent' })
 
+    const hugeFor1M = 'x'.repeat(1_000_000 * 4)
     await expect(
       admitLocalLmStudio({
         model: 'qwen/qwen3-coder-30b',
+        spec: hugeFor1M,
         inventory: inventory([{ id: 'qwen/qwen3-coder-30b', loaded_context_length: 1_048_576 }])
       })
     ).resolves.toMatchObject({ ok: false, status: 'context_unsafe' })
@@ -155,6 +157,77 @@ describe('local LM Studio admission', () => {
       reservedToolTokens: 8_192,
       reservedOutputTokens: 8_192
     })
+  })
+
+  it('admits poolside/laguna-s-2.1 dynamically at its real 32768 context window', async () => {
+    const admission = await admitLocalLmStudio({
+      model: 'poolside/laguna-s-2.1',
+      spec: 'short task',
+      inventory: inventory([
+        { id: 'poolside/laguna-s-2.1', state: 'loaded', loaded_context_length: 32_768 }
+      ])
+    })
+    expect(admission).toMatchObject({
+      ok: true,
+      status: 'available',
+      selectedModel: 'poolside/laguna-s-2.1',
+      contextWindowTokens: 32_768,
+      inputBudgetTokens: 16_384,
+      reservedToolTokens: 8_192,
+      reservedOutputTokens: 8_192,
+      splitRequired: false,
+      requiredChunks: 1
+    })
+  })
+
+  it('fails closed on poolside/laguna-s-2.1 when prompt exceeds its 16384 input budget', async () => {
+    const huge = 'x'.repeat(16_384 * 4 + 16)
+    const admission = await admitLocalLmStudio({
+      model: 'lmstudio/poolside/laguna-s-2.1',
+      spec: huge,
+      inventory: inventory([
+        { id: 'poolside/laguna-s-2.1', state: 'loaded', loaded_context_length: 32_768 }
+      ])
+    })
+    expect(admission).toMatchObject({
+      ok: false,
+      status: 'context_unsafe',
+      contextWindowTokens: 32_768,
+      inputBudgetTokens: 16_384,
+      splitRequired: true
+    })
+  })
+
+  it('prefers Laguna S 2.1 over Qwen fallbacks when no model is specified', async () => {
+    const admission = await admitLocalLmStudio({
+      inventory: inventory(['qwen/qwen3-coder-30b', 'poolside/laguna-s-2.1'])
+    })
+    expect(admission.ok).toBe(true)
+    expect(admission.selectedModel).toBe('poolside/laguna-s-2.1')
+  })
+
+  it('admits any arbitrary dynamic model from inventory', async () => {
+    const admission = await admitLocalLmStudio({
+      model: 'mistral-small-4-119b-2603',
+      inventory: inventory([
+        { id: 'mistral-small-4-119b-2603', state: 'loaded', loaded_context_length: 1_048_576 }
+      ])
+    })
+    expect(admission.ok).toBe(true)
+    expect(admission.selectedModel).toBe('mistral-small-4-119b-2603')
+    expect(admission.contextWindowTokens).toBe(1_048_576)
+  })
+
+  it('admits not-loaded models using context_length from inventory', async () => {
+    const admission = await admitLocalLmStudio({
+      model: 'poolside/laguna-s-2.1',
+      inventory: inventory([
+        { id: 'poolside/laguna-s-2.1', state: 'not-loaded', context_length: 32_768 }
+      ])
+    })
+    expect(admission.ok).toBe(true)
+    expect(admission.selectedModel).toBe('poolside/laguna-s-2.1')
+    expect(admission.contextWindowTokens).toBe(32_768)
   })
 
   it('reserves explicit tool and output headroom inside the exact 65536 window', async () => {
